@@ -1,0 +1,38 @@
+{
+  "name": "chiclana-avisos-mcp",
+  "version": "1.0.0",
+  "description": "Servidor MCP para la gestión de incidencias ciudadanas en Chiclana de la Frontera y municipios GECOR",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "chiclana-avisos-mcp": "dist/index.js",
+    "chiclana-avisos-cli": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "cli": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "chiclana",
+    "gecor",
+    "avisos",
+    "incidencias",
+    "cadiz",
+    "smartcity"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "exif-parser": "^0.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "typescript": "^5.7.3"
+  }
+}
