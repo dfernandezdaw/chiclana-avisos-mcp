@@ -1,6 +1,8 @@
 /**
  * Cliente de conexión directa a la API REST de GECOR
  */
+import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import {
   GECOR_API_URL,
   DEFAULT_AYTO_ID,
@@ -8,6 +10,7 @@ import {
   GECOR_TOKEN,
   GECOR_EMAIL,
   GECOR_PASSWORD,
+  DEFAULT_TOKEN_STORE_PATH,
 } from "./config.js";
 import type {
   GecorAyuntamiento,
@@ -20,6 +23,15 @@ import type {
   NuevaIncidenciaInput,
 } from "./types.js";
 
+export interface GecorSessionData {
+  token: string;
+  email?: string;
+  usuarioID?: number;
+  nombre?: string;
+  ayuntamientoID?: number;
+  obtainedAt?: number;
+}
+
 export interface GecorClientOptions {
   token?: string;
   email?: string;
@@ -27,6 +39,7 @@ export interface GecorClientOptions {
   ayuntamientoID?: number;
   language?: string;
   baseUrl?: string;
+  tokenStore?: string;
 }
 
 export class GecorApiError extends Error {
@@ -47,16 +60,40 @@ export class GecorClient {
   public ayuntamientoID: number;
   public language: string;
   private baseUrl: string;
+  private tokenStorePath: string;
   private currentUser: GecorUser | null = null;
   private currentAyuntamiento: GecorAyuntamiento | null = null;
 
   constructor(opts: GecorClientOptions = {}) {
-    this.token = opts.token ?? GECOR_TOKEN;
-    this.email = opts.email ?? GECOR_EMAIL;
+    this.tokenStorePath = opts.tokenStore ?? DEFAULT_TOKEN_STORE_PATH;
+
+    // Intentar leer token previo guardado en disco
+    let storedSession: GecorSessionData | undefined;
+    if (this.tokenStorePath) {
+      try {
+        storedSession = JSON.parse(readFileSync(this.tokenStorePath, "utf-8")) as GecorSessionData;
+      } catch {
+        // Archivo no existe todavía
+      }
+    }
+
+    this.token = opts.token ?? storedSession?.token ?? GECOR_TOKEN;
+    this.email = opts.email ?? storedSession?.email ?? GECOR_EMAIL;
     this.password = opts.password ?? GECOR_PASSWORD;
-    this.ayuntamientoID = opts.ayuntamientoID ?? DEFAULT_AYTO_ID;
+    this.ayuntamientoID = opts.ayuntamientoID ?? storedSession?.ayuntamientoID ?? DEFAULT_AYTO_ID;
     this.language = opts.language ?? DEFAULT_LANGUAGE;
     this.baseUrl = opts.baseUrl ?? GECOR_API_URL;
+
+    if (storedSession?.usuarioID) {
+      this.currentUser = {
+        token: this.token,
+        UsuarioID: storedSession.usuarioID,
+        Nombre: storedSession.nombre ?? null,
+        Email: storedSession.email ?? null,
+        Activo: true,
+        AyuntamientoID: this.ayuntamientoID,
+      };
+    }
   }
 
   hasToken(): boolean {
@@ -67,8 +104,14 @@ export class GecorClient {
     return this.token;
   }
 
-  setToken(token: string) {
-    this.token = token;
+  async saveSession(session: GecorSessionData): Promise<void> {
+    this.token = session.token;
+    if (session.ayuntamientoID) this.ayuntamientoID = session.ayuntamientoID;
+    try {
+      await writeFile(this.tokenStorePath, JSON.stringify(session, null, 2), { mode: 0o600 });
+    } catch (err) {
+      console.error(`[chiclana-avisos-mcp] Error guardando sesión en ${this.tokenStorePath}:`, err);
+    }
   }
 
   getCurrentUser(): GecorUser | null {
@@ -125,7 +168,7 @@ export class GecorClient {
   }
 
   /**
-   * Inicia sesión con email y contraseña en el ayuntamiento indicado
+   * Inicia sesión con email y contraseña en el ayuntamiento indicado y persiste la sesión
    */
   async login(email = this.email, password = this.password, ayuntamientoID = this.ayuntamientoID): Promise<GecorUser> {
     if (!email || !password) {
@@ -145,7 +188,31 @@ export class GecorClient {
     this.token = user.token;
     this.currentUser = user;
     this.ayuntamientoID = ayuntamientoID;
+
+    // Guardar automáticamente en disco para no requerir variables de entorno
+    await this.saveSession({
+      token: user.token,
+      email: user.Email ?? email,
+      usuarioID: user.UsuarioID,
+      nombre: user.Nombre ?? undefined,
+      ayuntamientoID,
+      obtainedAt: Date.now(),
+    });
+
     return user;
+  }
+
+  /**
+   * Guarda un token manual (obtenido por ejemplo de gecorweb.com)
+   */
+  async setTokenManual(token: string, email?: string): Promise<void> {
+    this.token = token.trim();
+    await this.saveSession({
+      token: this.token,
+      email: email ?? this.email,
+      ayuntamientoID: this.ayuntamientoID,
+      obtainedAt: Date.now(),
+    });
   }
 
   /**
@@ -160,7 +227,7 @@ export class GecorClient {
       return user.token!;
     }
     throw new Error(
-      "No hay token ni credenciales configuradas. Define GECOR_TOKEN o GECOR_EMAIL y GECOR_PASSWORD.",
+      "No hay token ni sesión activa guardada. Puedes iniciar sesión con: 'chiclana-avisos-cli login <email> <password>' o con 'set_token'.",
     );
   }
 
@@ -194,7 +261,6 @@ export class GecorClient {
    */
   async getCallesGeorreferenciadas(lat: number, lng: number, radioMetros = 100): Promise<GecorCalle[]> {
     const token = await this.ensureAuthenticated();
-    // Conversión a formato GPS interno de GECOR: 100 * trunc(deg) + 60 * (deg - trunc(deg))
     const convertToGps = (e: number) => 100 * Math.trunc(e) + 60 * (e - Math.trunc(e));
     const rad = Math.PI;
     const factor = 1 / ((2 * rad) / 360 * 6378.137) / 1000;

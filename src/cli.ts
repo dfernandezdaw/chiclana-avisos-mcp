@@ -27,8 +27,13 @@ async function main() {
 
       case "whoami": {
         const ayto = await client.getAyuntamiento();
+        const user = client.getCurrentUser();
         console.log("Ayuntamiento configurado:", ayto.Nombre, `(ID: ${ayto.AyuntamientoID})`);
-        console.log("Tiene token configurado:", client.hasToken());
+        console.log("Tiene token activo:", client.hasToken());
+        if (user) {
+          console.log("Usuario:", user.Nombre || user.Email || user.UsuarioID);
+          console.log("Email:", user.Email);
+        }
         break;
       }
 
@@ -40,10 +45,22 @@ async function main() {
           process.exit(1);
         }
         const user = await client.login(email, password);
-        console.log("Login exitoso!");
-        console.log("Usuario ID:", user.UsuarioID);
-        console.log("Nombre:", user.Nombre);
-        console.log("GECOR_TOKEN:", user.token);
+        console.log("\n¡Inicio de sesión exitoso!");
+        console.log("Usuario:", user.Nombre);
+        console.log("Email:", user.Email);
+        console.log("Sesión guardada automáticamente en ~/.gecor-session.json");
+        console.log("Ya no necesitas definir variables de entorno en tu sistema.");
+        break;
+      }
+
+      case "set-token": {
+        const token = args[1];
+        if (!token) {
+          console.error("Uso: chiclana-avisos-cli set-token <tu_token>");
+          process.exit(1);
+        }
+        await client.setTokenManual(token);
+        console.log("Token guardado con éxito en ~/.gecor-session.json");
         break;
       }
 
@@ -101,12 +118,13 @@ async function main() {
       default: {
         console.log(`
 Uso de chiclana-avisos-cli:
-  chiclana-avisos-cli ayuntamientos [filtro]    Listar municipios GECOR
-  chiclana-avisos-cli whoami                   Ver ayuntamiento configurado y estado de token
-  chiclana-avisos-cli login <email> <pass>     Iniciar sesión y obtener token
+  chiclana-avisos-cli login <email> <pass>     Iniciar sesión y guardar token en ~/.gecor-session.json
+  chiclana-avisos-cli set-token <token>        Guardar un token de gecorweb.com en disco
+  chiclana-avisos-cli whoami                   Ver estado de sesión guardada y municipio
   chiclana-avisos-cli categories [filtro]      Listar tipologías/categorías de averías
-  chiclana-avisos-cli photo <ruta-imagen.jpg>  Comprobar EXIF y GPS de una fotografía
   chiclana-avisos-cli calles [filtro]          Buscar calles en el callejero
+  chiclana-avisos-cli photo <ruta-imagen.jpg>  Comprobar EXIF y GPS de una fotografía
+  chiclana-avisos-cli ayuntamientos [filtro]    Listar municipios GECOR
         `);
       }
     }

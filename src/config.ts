@@ -1,6 +1,8 @@
 /**
  * Configuración del servidor MCP para GECOR / Chiclana
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export const GECOR_API_URL = process.env.GECOR_API_URL || "https://gecorapiwe.azurewebsites.net/api";
 export const GECOR_INFO_URL = process.env.GECOR_INFO_URL || "https://infogecorwe.azurewebsites.net/api";
@@ -18,5 +20,9 @@ export const DEFAULT_PROCEDENCIA_MOVIL = Number(process.env.GECOR_PROCEDENCIA_MO
 export const GECOR_TOKEN = process.env.GECOR_TOKEN || "";
 export const GECOR_EMAIL = process.env.GECOR_EMAIL || "";
 export const GECOR_PASSWORD = process.env.GECOR_PASSWORD || "";
+
+// Almacén persistente de sesión por defecto ~/.gecor-session.json
+export const DEFAULT_TOKEN_STORE_PATH =
+  process.env.GECOR_TOKEN_STORE || join(homedir(), ".gecor-session.json");
 
 export const DEFAULT_LANGUAGE = process.env.GECOR_LANGUAGE || "es";
