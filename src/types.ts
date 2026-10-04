@@ -8,7 +8,8 @@ export interface GecorAyuntamiento {
   ProcedenciaMovil: number;
   ProcedenciaTecnico: number;
   ProcedenciaWeb: number;
-  UsuarioIDCiudadano: number;
+  UsuarioID: number;
+  UsuarioIDCiudadano?: number;
   TokenAyuntamiento?: string | null;
   Latitud: number;
   Longitud: number;
@@ -121,7 +122,7 @@ export interface NuevaIncidenciaInput {
   movil?: string;
   tipoElementoID: number;
   desTipoElemento?: string;
-  tipoIncID: number;
+  tipoIncID: string;
   tipoInc?: string;
   desAveria: string;
   x: number;

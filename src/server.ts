@@ -1,6 +1,7 @@
 /**
  * Servidor MCP para GECOR / Chiclana de la Frontera
  */
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -11,7 +12,37 @@ import { GecorClient } from "./client.js";
 import { parsePhoto } from "./photo.js";
 import { DEFAULT_AYTO_ID, DEFAULT_AYTO_NAME } from "./config.js";
 
+interface PendingAvisoPreview {
+  payload: {
+    description: string;
+    petitioner: { Nombre: string; Email: string; Movil: string; CiudadanoID: number };
+    tipoElementoID: number;
+    tipoIncID: number;
+    desTipoElemento: string;
+    tipoInc: string;
+    lat: number;
+    lng: number;
+    nomCalle: string;
+    numCalle: number;
+    calleID: number;
+    desUbicacion: string;
+  };
+  photoDataUri?: string;
+  ayuntamientoID: number;
+  expiresAt: number;
+}
+
+const PREVIEW_TTL_MS = 10 * 60 * 1000;
+const MAX_PENDING_PREVIEWS = 100;
+
+export function assertSubmissionEnabled(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.GECOR_ALLOW_SUBMISSION !== "true") {
+    throw new Error("Envío deshabilitado: configura GECOR_ALLOW_SUBMISSION=true para habilitar subidas y envíos a GECOR.");
+  }
+}
+
 export function createMcpServer(client: GecorClient = new GecorClient()): Server {
+  const pendingPreviews = new Map<string, PendingAvisoPreview>();
   const server = new Server(
     {
       name: "chiclana-avisos-mcp",
@@ -29,7 +60,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
       tools: [
         {
           name: "whoami",
-          description: "Muestra el estado de la sesión, usuario autenticado y municipio activo configurado en GECOR.",
+          description: "Muestra el municipio activo y si GECOR_TOKEN está configurado.",
           inputSchema: {
             type: "object",
             properties: {},
@@ -115,9 +146,10 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         },
         {
           name: "create_aviso_preview",
-          description: "Prepara y previsualiza un aviso municipal sin enviarlo al ayuntamiento (dry-run). Puede extraer el GPS automáticamente si se proporciona una foto. Devuelve el resumen exacto de lo que se enviaría.",
+          description: "Primera fase obligatoria: prepara un aviso en dry-run, sin subir fotos ni enviar nada a GECOR. Devuelve el resumen editable y un preview_token temporal. Enseña el resumen al usuario; si quiere cambiar algo, genera otra previsualización. Nunca envíes sin un sí explícito a ese resumen exacto.",
           inputSchema: {
             type: "object",
+            additionalProperties: false,
             properties: {
               description: {
                 type: "string",
@@ -177,68 +209,16 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         },
         {
           name: "create_aviso",
-          description: "Crea y envía formalmente la incidencia al ayuntamiento a través de GECOR. IMPORTANTE: Opera en modo seguro; por defecto sólo simula el envío (dry-run) a menos que se especifique explícitamente confirm: true.",
+          description: "Segunda fase únicamente: envía al municipio el payload inmutable de una previsualización vigente, solo si el usuario dijo sí explícitamente al resumen exacto. Requiere confirm:true, human_confirmed:true y el preview_token recién devuelto. Nunca acepta campos del aviso en esta fase; para hacer cambios, crea una nueva previsualización.",
           inputSchema: {
             type: "object",
+            additionalProperties: false,
             properties: {
-              description: {
-                type: "string",
-                description: "Descripción del desperfecto o problema.",
-              },
-              tipoElementoID: {
-                type: "number",
-                description: "ID del elemento/subcategoría.",
-              },
-              tipoIncID: {
-                type: "number",
-                description: "ID del tipo de incidencia.",
-              },
-              desTipoElemento: {
-                type: "string",
-                description: "Nombre del elemento.",
-              },
-              tipoInc: {
-                type: "string",
-                description: "Nombre de la incidencia.",
-              },
-              lat: {
-                type: "number",
-                description: "Latitud de la ubicación.",
-              },
-              lng: {
-                type: "number",
-                description: "Longitud de la ubicación.",
-              },
-              nomCalle: {
-                type: "string",
-                description: "Nombre de la calle.",
-              },
-              numCalle: {
-                type: "number",
-                description: "Número de calle.",
-              },
-              calleID: {
-                type: "number",
-                description: "ID de la calle (opcional si no se conoce).",
-              },
-              desUbicacion: {
-                type: "string",
-                description: "Detalle de ubicación adicional.",
-              },
-              image_path: {
-                type: "string",
-                description: "Ruta local de una fotografía a adjuntar y subir a GECOR.",
-              },
-              image_base64: {
-                type: "string",
-                description: "Foto en base64 a subir a GECOR.",
-              },
-              confirm: {
-                type: "boolean",
-                description: "Debe ser explícitamente 'true' para realizar la llamada POST real al ayuntamiento. Si es false o ausente, devuelve una simulación segura.",
-              },
+              preview_token: { type: "string", description: "Token opaco de una previsualización vigente." },
+              confirm: { type: "boolean", description: "true solo tras el sí explícito del usuario al resumen mostrado." },
+              human_confirmed: { type: "boolean", description: "true solo cuando el usuario confirmó explícitamente el resumen exacto." },
             },
-            required: ["description", "tipoElementoID", "tipoIncID", "lat", "lng"],
+            required: ["preview_token", "confirm", "human_confirmed"],
           },
         },
         {
@@ -478,46 +458,74 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           const imageBase64 = typeof args?.image_base64 === "string" ? args.image_base64 : undefined;
 
           let photoWarning: string | undefined;
-          let hasPhoto = false;
+          const hasPhoto = Boolean(imagePath || imageBase64);
+          let photoDataUri: string | undefined;
+          const petitioner = client.getPetitionerIdentity();
+          const ayto = await client.getAyuntamiento();
 
+          if (!String(args?.description ?? "").trim()) throw new Error("La descripción no puede estar vacía.");
+          const tipoElementoID = Number(args?.tipoElementoID);
+          const tipoIncID = Number(args?.tipoIncID);
+          if (!Number.isInteger(tipoElementoID) || tipoElementoID <= 0) throw new Error("tipoElementoID debe ser un entero positivo.");
+          if (!Number.isInteger(tipoIncID) || tipoIncID <= 0) throw new Error("tipoIncID debe ser un entero positivo.");
+          if (imagePath && imageBase64) throw new Error("Proporciona solo image_path o image_base64, no ambos.");
           if (imagePath || imageBase64) {
-            hasPhoto = true;
             try {
               const photo = await parsePhoto(imageBase64, imagePath);
-              if (photo.gps && (lat === undefined || lng === undefined)) {
+              photoDataUri = photo.dataUri;
+              if (photo.gps && (args?.lat === undefined || args?.lng === undefined)) {
                 lat = photo.gps.lat;
                 lng = photo.gps.lng;
               }
-              if (photo.warning) photoWarning = photo.warning;
+              photoWarning = photo.warning;
             } catch (err: any) {
               photoWarning = `No se pudo procesar la imagen: ${err.message}`;
+              throw new Error(photoWarning);
             }
           }
 
-          const ayto = await client.getAyuntamiento();
+          if (!Number.isFinite(lat) || lat === undefined || lat < -90 || lat > 90) throw new Error("Latitud inválida; se requieren coordenadas válidas.");
+          if (!Number.isFinite(lng) || lng === undefined || lng < -180 || lng > 180) throw new Error("Longitud inválida; se requieren coordenadas válidas.");
+
+          const payload: PendingAvisoPreview["payload"] = {
+            description: String(args?.description).trim(),
+            petitioner,
+            tipoElementoID,
+            tipoIncID,
+            desTipoElemento: typeof args?.desTipoElemento === "string" ? args.desTipoElemento : "",
+            tipoInc: typeof args?.tipoInc === "string" ? args.tipoInc : "",
+            lat,
+            lng,
+            nomCalle: typeof args?.nomCalle === "string" ? args.nomCalle : "",
+            numCalle: args?.numCalle === undefined ? 0 : Number(args.numCalle),
+            calleID: args?.calleID === undefined ? 0 : Number(args.calleID),
+            desUbicacion: typeof args?.desUbicacion === "string" ? args.desUbicacion : "",
+          };
+          if (!Number.isFinite(payload.numCalle) || !Number.isInteger(payload.calleID)) throw new Error("Número o identificador de calle inválido.");
+
+          const previewToken = randomUUID();
+          const now = Date.now();
+          for (const [key, value] of pendingPreviews) if (value.expiresAt <= now) pendingPreviews.delete(key);
+          while (pendingPreviews.size >= MAX_PENDING_PREVIEWS) {
+            const oldest = pendingPreviews.keys().next().value;
+            if (!oldest) break;
+            pendingPreviews.delete(oldest);
+          }
+          pendingPreviews.set(previewToken, { payload, photoDataUri, ayuntamientoID: ayto.AyuntamientoID, expiresAt: now + PREVIEW_TTL_MS });
 
           const preview = {
-            modo: "DRY-RUN (Simulación / Previsualización)",
+            modo: "DRY-RUN (no se envía nada ni se suben fotos)",
             ayuntamiento: ayto.Nombre,
             ayuntamientoID: ayto.AyuntamientoID,
-            categoria: {
-              tipoElementoID: args?.tipoElementoID,
-              desTipoElemento: args?.desTipoElemento,
-              tipoIncID: args?.tipoIncID,
-              tipoInc: args?.tipoInc,
-            },
-            ubicacion: {
-              lat: lat ?? "No especificada (requerida para envío)",
-              lng: lng ?? "No especificada (requerida para envío)",
-              nomCalle: args?.nomCalle,
-              numCalle: args?.numCalle,
-              desUbicacion: args?.desUbicacion,
-              calleID: args?.calleID,
-            },
-            descripcion: args?.description,
+            peticionario: payload.petitioner,
+            categoria: { tipoElementoID, desTipoElemento: payload.desTipoElemento, tipoIncID, tipoInc: payload.tipoInc },
+            ubicacion: { lat, lng, nomCalle: payload.nomCalle, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
+            descripcion: payload.description,
             foto_adjunta: hasPhoto,
             aviso_foto: photoWarning,
-            instruccion: "Muestra este resumen al usuario. Si da su confirmación, llama a 'create_aviso' con confirm: true.",
+            preview_token: previewToken,
+            expira_en_segundos: PREVIEW_TTL_MS / 1000,
+            instruccion: "Muestra este resumen al usuario y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Envía solo ese sí exacto con create_aviso, confirm:true, human_confirmed:true y este preview_token.",
           };
 
           return {
@@ -531,64 +539,43 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         }
 
         case "create_aviso": {
-          const confirm = Boolean(args?.confirm);
-          const description = String(args?.description || "");
-          const tipoElementoID = Number(args?.tipoElementoID);
-          const tipoIncID = Number(args?.tipoIncID);
-          const lat = Number(args?.lat);
-          const lng = Number(args?.lng);
-
-          const imagePath = typeof args?.image_path === "string" ? args.image_path : undefined;
-          const imageBase64 = typeof args?.image_base64 === "string" ? args.image_base64 : undefined;
-
-          if (!confirm) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: JSON.stringify(
-                    {
-                      estado: "DRY-RUN_NO_ENVIADO",
-                      motivo: "Se requiere 'confirm: true' para registrar el aviso real ante el Ayuntamiento.",
-                      payload_preparado: {
-                        description,
-                        tipoElementoID,
-                        tipoIncID,
-                        lat,
-                        lng,
-                        nomCalle: args?.nomCalle,
-                        numCalle: args?.numCalle,
-                        desUbicacion: args?.desUbicacion,
-                      },
-                    },
-                    null,
-                    2,
-                  ),
-                },
-              ],
-            };
+          if (args?.confirm !== true || args?.human_confirmed !== true) {
+            throw new Error("No enviado. Se requiere el sí explícito del usuario al resumen mostrado (confirm:true y human_confirmed:true).");
           }
+          const previewToken = typeof args?.preview_token === "string" ? args.preview_token : "";
+          const preview = pendingPreviews.get(previewToken);
+          if (!preview) throw new Error("Previsualización inexistente, vencida o ya utilizada. Genera un nuevo dry-run y solicita aprobación otra vez.");
+          if (preview.expiresAt <= Date.now()) {
+            pendingPreviews.delete(previewToken);
+            throw new Error("La previsualización venció. Genera un nuevo dry-run y solicita aprobación otra vez.");
+          }
+          assertSubmissionEnabled();
+          // Burn before any side effect so retries can never create duplicate incidents.
+          pendingPreviews.delete(previewToken);
 
-          // Si hay foto y confirmación, se sube primero la foto a GECOR
           const fotos: Array<{ rutaFoto: string }> = [];
-          if (imagePath || imageBase64) {
-            const photo = await parsePhoto(imageBase64, imagePath);
-            const ruta = await client.guardarFotoBase64(photo.base64);
+          if (preview.photoDataUri) {
+            const ruta = await client.guardarFotoBase64(preview.photoDataUri);
             fotos.push({ rutaFoto: ruta });
           }
-
+          const payload = preview.payload;
           const resultado = await client.nuevaIncidencia({
-            tipoElementoID,
-            desTipoElemento: typeof args?.desTipoElemento === "string" ? args.desTipoElemento : "",
-            tipoIncID,
-            tipoInc: typeof args?.tipoInc === "string" ? args.tipoInc : "",
-            desAveria: description,
-            x: lat,
-            y: lng,
-            calleID: args?.calleID ? Number(args.calleID) : 0,
-            nomCalle: typeof args?.nomCalle === "string" ? args.nomCalle : "",
-            numCalle: args?.numCalle ? Number(args.numCalle) : 0,
-            desUbicacion: typeof args?.desUbicacion === "string" ? args.desUbicacion : "",
+            ayuntamientoID: preview.ayuntamientoID,
+            ciudadanoID: payload.petitioner.CiudadanoID,
+            nombrePeticionario: payload.petitioner.Nombre,
+            email: payload.petitioner.Email,
+            movil: payload.petitioner.Movil,
+            tipoElementoID: payload.tipoElementoID,
+            desTipoElemento: payload.desTipoElemento,
+            tipoIncID: payload.tipoIncID,
+            tipoInc: payload.tipoInc,
+            desAveria: payload.description,
+            x: payload.lat,
+            y: payload.lng,
+            calleID: payload.calleID,
+            nomCalle: payload.nomCalle,
+            numCalle: payload.numCalle,
+            desUbicacion: payload.desUbicacion,
             fotos,
           });
 

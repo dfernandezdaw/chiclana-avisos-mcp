@@ -1,16 +1,11 @@
 /**
  * Cliente de conexión directa a la API REST de GECOR
  */
-import { readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
 import {
   GECOR_API_URL,
   DEFAULT_AYTO_ID,
   DEFAULT_LANGUAGE,
   GECOR_TOKEN,
-  GECOR_EMAIL,
-  GECOR_PASSWORD,
-  DEFAULT_TOKEN_STORE_PATH,
 } from "./config.js";
 import type {
   GecorAyuntamiento,
@@ -23,23 +18,10 @@ import type {
   NuevaIncidenciaInput,
 } from "./types.js";
 
-export interface GecorSessionData {
-  token: string;
-  email?: string;
-  usuarioID?: number;
-  nombre?: string;
-  ayuntamientoID?: number;
-  obtainedAt?: number;
-}
-
 export interface GecorClientOptions {
-  token?: string;
-  email?: string;
-  password?: string;
   ayuntamientoID?: number;
   language?: string;
   baseUrl?: string;
-  tokenStore?: string;
 }
 
 export class GecorApiError extends Error {
@@ -53,47 +35,52 @@ export class GecorApiError extends Error {
   }
 }
 
+export interface PetitionerIdentity {
+  Nombre: string;
+  Email: string;
+  Movil: string;
+  CiudadanoID: number;
+}
+
+export function extractPetitionerIdentity(token: string): PetitionerIdentity {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3 || !parts[1]) throw new Error();
+    const claims: unknown = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    if (!claims || typeof claims !== "object" || Array.isArray(claims)) throw new Error();
+    const source = claims as Record<string, unknown>;
+    const values = new Map<string, unknown>();
+    for (const [key, value] of Object.entries(source)) {
+      const normalized = key.toLowerCase();
+      if (["nombre", "email", "movil", "ciudadanoid"].includes(normalized)) values.set(normalized, value);
+    }
+    const nombre = values.get("nombre");
+    const email = values.get("email");
+    const movil = values.get("movil");
+    const ciudadanoID = values.get("ciudadanoid");
+    if (typeof nombre !== "string" || !nombre.trim() || typeof email !== "string" || !email.trim() ||
+        typeof movil !== "string" || !movil.trim() || typeof ciudadanoID !== "number" ||
+        !Number.isSafeInteger(ciudadanoID) || ciudadanoID <= 0) throw new Error();
+    return { Nombre: nombre.trim(), Email: email.trim(), Movil: movil.trim(), CiudadanoID: ciudadanoID };
+  } catch {
+    throw new Error("No se pudo resolver la identidad del peticionario requerida desde GECOR_TOKEN.");
+  }
+}
+
 export class GecorClient {
   private token: string;
-  private email: string;
-  private password: string;
   public ayuntamientoID: number;
   public language: string;
   private baseUrl: string;
-  private tokenStorePath: string;
   private currentUser: GecorUser | null = null;
   private currentAyuntamiento: GecorAyuntamiento | null = null;
 
   constructor(opts: GecorClientOptions = {}) {
-    this.tokenStorePath = opts.tokenStore ?? DEFAULT_TOKEN_STORE_PATH;
-
-    // Intentar leer token previo guardado en disco
-    let storedSession: GecorSessionData | undefined;
-    if (this.tokenStorePath) {
-      try {
-        storedSession = JSON.parse(readFileSync(this.tokenStorePath, "utf-8")) as GecorSessionData;
-      } catch {
-        // Archivo no existe todavía
-      }
-    }
-
-    this.token = opts.token ?? storedSession?.token ?? GECOR_TOKEN;
-    this.email = opts.email ?? storedSession?.email ?? GECOR_EMAIL;
-    this.password = opts.password ?? GECOR_PASSWORD;
-    this.ayuntamientoID = opts.ayuntamientoID ?? storedSession?.ayuntamientoID ?? DEFAULT_AYTO_ID;
+    this.token = GECOR_TOKEN;
+    this.ayuntamientoID = opts.ayuntamientoID ?? DEFAULT_AYTO_ID;
     this.language = opts.language ?? DEFAULT_LANGUAGE;
     this.baseUrl = opts.baseUrl ?? GECOR_API_URL;
 
-    if (storedSession?.usuarioID) {
-      this.currentUser = {
-        token: this.token,
-        UsuarioID: storedSession.usuarioID,
-        Nombre: storedSession.nombre ?? null,
-        Email: storedSession.email ?? null,
-        Activo: true,
-        AyuntamientoID: this.ayuntamientoID,
-      };
-    }
   }
 
   hasToken(): boolean {
@@ -104,14 +91,8 @@ export class GecorClient {
     return this.token;
   }
 
-  async saveSession(session: GecorSessionData): Promise<void> {
-    this.token = session.token;
-    if (session.ayuntamientoID) this.ayuntamientoID = session.ayuntamientoID;
-    try {
-      await writeFile(this.tokenStorePath, JSON.stringify(session, null, 2), { mode: 0o600 });
-    } catch (err) {
-      console.error(`[chiclana-avisos-mcp] Error guardando sesión en ${this.tokenStorePath}:`, err);
-    }
+  getPetitionerIdentity(): PetitionerIdentity {
+    return extractPetitionerIdentity(this.token);
   }
 
   getCurrentUser(): GecorUser | null {
@@ -158,61 +139,12 @@ export class GecorClient {
     if (this.currentAyuntamiento && this.currentAyuntamiento.AyuntamientoID === ayuntamientoID) {
       return this.currentAyuntamiento;
     }
-    const list = await this.getAyuntamientos();
-    const found = list.find((a) => a.AyuntamientoID === ayuntamientoID);
-    if (!found) {
-      throw new Error(`Ayuntamiento con ID ${ayuntamientoID} no encontrado en GECOR.`);
-    }
-    this.currentAyuntamiento = found;
-    return found;
-  }
-
-  /**
-   * Inicia sesión con email y contraseña en el ayuntamiento indicado y persiste la sesión
-   */
-  async login(email = this.email, password = this.password, ayuntamientoID = this.ayuntamientoID): Promise<GecorUser> {
-    if (!email || !password) {
-      throw new Error("Se requiere email y contraseña para iniciar sesión en GECOR.");
-    }
-    const user = await this.post<GecorUser>("User/loginUser", {
-      email,
-      password,
+    const detail = await this.post<GecorAyuntamiento>("Utils/getAyuntamientoByAytoID", {
+      language: this.language,
       ayuntamientoID,
-      dispositivo: "WebCiudadano",
     });
-
-    if (!user.token) {
-      throw new Error(`Error de autenticación en GECOR: credenciales inválidas para el ayuntamiento ${ayuntamientoID}.`);
-    }
-
-    this.token = user.token;
-    this.currentUser = user;
-    this.ayuntamientoID = ayuntamientoID;
-
-    // Guardar automáticamente en disco para no requerir variables de entorno
-    await this.saveSession({
-      token: user.token,
-      email: user.Email ?? email,
-      usuarioID: user.UsuarioID,
-      nombre: user.Nombre ?? undefined,
-      ayuntamientoID,
-      obtainedAt: Date.now(),
-    });
-
-    return user;
-  }
-
-  /**
-   * Guarda un token manual (obtenido por ejemplo de gecorweb.com)
-   */
-  async setTokenManual(token: string, email?: string): Promise<void> {
-    this.token = token.trim();
-    await this.saveSession({
-      token: this.token,
-      email: email ?? this.email,
-      ayuntamientoID: this.ayuntamientoID,
-      obtainedAt: Date.now(),
-    });
+    this.currentAyuntamiento = detail;
+    return detail;
   }
 
   /**
@@ -222,13 +154,7 @@ export class GecorClient {
     if (this.hasToken()) {
       return this.token;
     }
-    if (this.email && this.password) {
-      const user = await this.login();
-      return user.token!;
-    }
-    throw new Error(
-      "No hay token ni sesión activa guardada. Puedes iniciar sesión con: 'chiclana-avisos-cli login <email> <password>' o con 'set_token'.",
-    );
+    throw new Error("Falta GECOR_TOKEN en el entorno del proceso MCP. Configúralo en la entrada MCP.");
   }
 
   /**
@@ -291,10 +217,9 @@ export class GecorClient {
    */
   async guardarFotoBase64(base64Image: string): Promise<string> {
     const token = await this.ensureAuthenticated();
-    const cleanBase64 = base64Image.replace(/^data:image\/[\w+.-]+;base64,/, "").trim();
     const res = await this.post<GecorFotoUploadResponse>("Incident/guardarFotoBase64", {
       token,
-      byteFoto: cleanBase64,
+      byteFoto: base64Image,
     });
     if (!res || !res.rutaFoto) {
       throw new Error("No se pudo subir la foto a GECOR: respuesta inválida.");
@@ -335,7 +260,8 @@ export class GecorClient {
   /**
    * Registra una nueva incidencia en GECOR
    */
-  async nuevaIncidencia(input: Omit<NuevaIncidenciaInput, "token" | "ayuntamientoID" | "tipoProcedenciaID"> & {
+  async nuevaIncidencia(input: Omit<NuevaIncidenciaInput, "token" | "ayuntamientoID" | "tipoProcedenciaID" | "tipoIncID"> & {
+    tipoIncID: number;
     ayuntamientoID?: number;
     tipoProcedenciaID?: number;
   }): Promise<Record<string, unknown>> {
@@ -346,14 +272,14 @@ export class GecorClient {
       token,
       ayuntamientoID: ayto.AyuntamientoID,
       tipoProcedenciaID: input.tipoProcedenciaID ?? ayto.ProcedenciaWeb ?? 1390,
-      usuarioID: input.usuarioID ?? this.currentUser?.UsuarioID ?? ayto.UsuarioIDCiudadano,
+      usuarioID: input.usuarioID ?? this.currentUser?.UsuarioID ?? ayto.UsuarioID,
       ciudadanoID: input.ciudadanoID ?? this.currentUser?.CiudadanoID ?? 0,
       nombrePeticionario: input.nombrePeticionario ?? this.currentUser?.Nombre ?? "Ciudadano",
       email: input.email ?? this.currentUser?.Email ?? "",
       movil: input.movil ?? this.currentUser?.Movil ?? "",
       tipoElementoID: input.tipoElementoID,
       desTipoElemento: input.desTipoElemento ?? "",
-      tipoIncID: input.tipoIncID,
+      tipoIncID: String(input.tipoIncID),
       tipoInc: input.tipoInc ?? "",
       desAveria: input.desAveria,
       x: input.x,

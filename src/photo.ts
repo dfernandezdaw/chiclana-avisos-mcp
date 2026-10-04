@@ -19,6 +19,7 @@ export interface PhotoInfo {
   gps: PhotoGps | null;
   bytes: number;
   base64: string;
+  dataUri: string;
   warning?: string;
 }
 
@@ -69,6 +70,7 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
     gps: null,
     bytes: buf.length,
     base64,
+    dataUri: `data:image/${isJpeg(buf) ? "jpeg" : "png"};base64,${base64}`,
   };
 
   if (!isJpeg(buf)) {

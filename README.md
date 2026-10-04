@@ -17,16 +17,9 @@ Permite que un agente de IA pueda:
 
 ## 🚀 Inicio Rápido
 
-### 1. Obtener Credenciales de GECOR
+### 1. Obtener el token de GECOR
 
-Existen dos vías de autenticación:
-
-1. **Email y Contraseña**: Si estás registrado en la app móvil (*Mejora Chiclana*) o en la web [gecorweb.com](https://gecorweb.com/login). Puedes pasar directamente `GECOR_EMAIL` y `GECOR_PASSWORD`.
-2. **Token directo**: Puedes obtener tu token mediante el CLI integrado:
-   ```bash
-   node dist/cli.js login tu-email@ejemplo.com tu-contraseña
-   ```
-   O bien inspeccionando el `localStorage` en DevTools de `gecorweb.com` tras iniciar sesión (clave `user` -> campo `token`).
+Autentica con GECOR y obtén el token de la sesión (por ejemplo, desde `localStorage` en DevTools de [gecorweb.com](https://gecorweb.com/login), clave `user` → campo `token`). El servidor únicamente acepta `GECOR_TOKEN` en el entorno de su propio proceso MCP. No guarda sesiones ni admite inicio de sesión con email y contraseña.
 
 ### 2. Configurar en tu cliente MCP
 
@@ -48,24 +41,7 @@ Añade a tu fichero de configuración de MCP (`claude_desktop_config.json` o set
   }
 }
 ```
-
-*Alternativamente, con email y contraseña:*
-
-```json
-{
-  "mcpServers": {
-    "chiclana-avisos": {
-      "command": "node",
-      "args": ["/ruta/absoluta/a/chiclana-avisos-mcp/dist/index.js"],
-      "env": {
-        "GECOR_AYTO_ID": "268",
-        "GECOR_EMAIL": "tu-email@ejemplo.com",
-        "GECOR_PASSWORD": "tu-contraseña"
-      }
-    }
-  }
-}
-```
+Configura el token directamente en `env` para **cada entrada MCP** que inicie este servidor. No uses una exportación global del token: así las credenciales quedan limitadas al proceso MCP correspondiente.
 
 ---
 
@@ -73,14 +49,14 @@ Añade a tu fichero de configuración de MCP (`claude_desktop_config.json` o set
 
 | Tool | Descripción |
 |---|---|
-| `whoami` | Muestra el municipio configurado, estado de autenticación y datos del usuario. |
+| `whoami` | Muestra el municipio activo y si `GECOR_TOKEN` está configurado. |
 | `list_ayuntamientos` | Lista los 49 municipios soportados por la plataforma GECOR (con buscador). |
 | `set_ayuntamiento` | Cambia el municipio activo dinámicamente (`ayuntamientoID`). |
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
 | `resolve_location` | Resuelve calles georreferenciadas por coordenadas GPS o busca en el callejero oficial de GECOR. |
 | `parse_photo_gps` | Extrae metadatos y coordenadas GPS EXIF de una imagen (fichero local o base64). |
-| `create_aviso_preview` | **Dry-run seguro**: Prepara el aviso, extrae GPS de la foto si existe, y devuelve el resumen para aprobación del usuario. |
-| `create_aviso` | **Creación real**: Sube la foto y registra el aviso formal. Requiere explícitamente `confirm: true`. |
+| `create_aviso_preview` | **Primera fase obligatoria, dry-run**: valida y congela la propuesta (incluidos los datos del peticionario); no sube fotos ni registra nada. Devuelve el resumen y `preview_token`. |
+| `create_aviso` | **Segunda fase**: solo registra el contenido exacto de una previsualización vigente tras aprobación explícita (`confirm: true`, `human_confirmed: true` y `preview_token`). |
 | `list_my_avisos` | Lista las incidencias creadas por el usuario con su estado actual de tramitación. |
 
 ---
@@ -89,9 +65,16 @@ Añade a tu fichero de configuración de MCP (`claude_desktop_config.json` o set
 
 Al igual que en `madrid-avisos-mcp`, **crear un aviso genera un ticket oficial en los servicios municipales**:
 
-1. El flujo recomendado del agente es:
-   `parse_photo_gps` / `resolve_location` → `list_categories` → `create_aviso_preview` → **esperar confirmación del usuario** → `create_aviso(confirm: true)`.
-2. Si se llama a `create_aviso` sin `confirm: true` o con `confirm: false`, la herramienta **no registrará nada en GECOR** y devolverá una simulación segura del payload.
+1. El flujo es siempre de dos fases:
+   `parse_photo_gps` / `resolve_location` → `list_categories` → `create_aviso_preview` → mostrar el resumen al usuario.
+2. Si el usuario pide un cambio o ajuste, vuelve a llamar `create_aviso_preview` con la propuesta corregida y muestra el nuevo resumen. Cada previsualización se guarda solo en memoria del servidor, vence a los 10 minutos y su token es de un solo uso.
+3. Solo después de un **sí explícito** al resumen exacto, llama `create_aviso` con `preview_token`, `confirm: true` y `human_confirmed: true`. Esta herramienta no acepta campos editables del aviso: envía exactamente el payload congelado en esa previsualización. La foto solo se sube en esta fase.
+4. Sin confirmación, con un token vencido o reutilizado, no se registra nada. Si la llamada final falla después de consumir el token, genera una nueva previsualización y vuelve a pedir aprobación; no reintentes el token anterior.
+
+### Identidad y ubicación en la previsualización
+
+- El MCP obtiene `Nombre`, `Email`, `Movil` y `CiudadanoID` de claims permitidas del `GECOR_TOKEN`, y los muestra en el resumen para que se revisen antes de autorizar. Si falta un dato o el token no contiene un formato reconocido, la previsualización falla de forma cerrada; no inventa valores ni usa datos de contacto vacíos. El token y los claims completos no se registran ni se muestran.
+- Para una dirección elegida en el mapa, pasa la dirección formateada en `desUbicacion`, además de latitud, longitud y número de portal cuando estén disponibles. El envío mapea latitud a `x` y longitud a `y`; `calleID: 0` es válido cuando no hay un ID del callejero GECOR. `resolve_location` es una ayuda independiente y puede no devolver coincidencias.
 
 ---
 
@@ -118,7 +101,6 @@ Se incluye una utilidad de línea de comandos para realizar pruebas directas:
 ```bash
 node dist/cli.js ayuntamientos [filtro]    # Buscar municipios GECOR
 node dist/cli.js whoami                   # Ver estado de configuración
-node dist/cli.js login <email> <pass>     # Iniciar sesión y obtener token
 node dist/cli.js categories [filtro]      # Ver categorías y tipologías
 node dist/cli.js photo <foto.jpg>         # Inspeccionar metadatos GPS EXIF de una foto
 node dist/cli.js calles [filtro]          # Consultar callejero oficial
