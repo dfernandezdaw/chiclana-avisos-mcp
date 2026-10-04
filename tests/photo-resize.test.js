@@ -140,11 +140,15 @@ test("PNG is never resized", async () => {
   assert.equal(info.height, 3000);
 });
 
-test("undecodable oversized JPEG fails with a clear Spanish error", async () => {
+test("undecodable oversized JPEG falls back to the original bytes with a warning", async () => {
   // SOF0 declarando 20000x20000 (400 MP) sin datos de imagen.
   const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x4e, 0x20, 0x4e, 0x20, 0x03, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
   const bogus = Buffer.concat([Buffer.from([0xff, 0xd8]), sof, Buffer.from([0xff, 0xd9])]);
-  await assert.rejects(parsePhoto(bogus.toString("base64")), /No se pudo reducir la foto JPEG/);
+  const info = await parsePhoto(bogus.toString("base64"));
+  assert.equal(info.base64, bogus.toString("base64"));
+  assert.equal(info.reduced, false);
+  assert.equal(info.uploadBytes, bogus.length);
+  assert.match(info.reductionWarning ?? "", /No se pudo reducir la foto JPEG/);
 });
 
 class TestTransport {

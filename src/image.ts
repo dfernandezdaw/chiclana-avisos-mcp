@@ -20,6 +20,8 @@ export interface ReducedJpeg {
   exifPreserved: boolean;
   width?: number;
   height?: number;
+  /** Motivo por el que se sube el original sin reducir, si la reducción falló. */
+  warning?: string;
 }
 
 interface JpegSegment {
@@ -161,11 +163,12 @@ export function reduceJpeg(buf: Buffer): ReducedJpeg {
       maxMemoryUsageInMB: MAX_DECODE_MEMORY_MB,
     });
   } catch (err: any) {
-    throw new Error(`No se pudo reducir la foto JPEG: no se pudo decodificar (${err?.message || String(err)}). Prueba con otra foto o una de menor resolución.`);
+    // Una foto válida que jpeg-js no sabe decodificar no debe bloquear el aviso: se sube el original.
+    return { ...original, warning: `No se pudo reducir la foto JPEG (${err?.message || String(err)}); se subirá sin reducir.` };
   }
   const { width, height } = decoded;
   if (decoded.data.length < width * height * 3) {
-    throw new Error("No se pudo reducir la foto JPEG: datos de imagen incompletos.");
+    return { ...original, warning: "No se pudo reducir la foto JPEG (datos de imagen incompletos); se subirá sin reducir." };
   }
   const scale = Math.max(width, height) / MAX_UPLOAD_SIDE;
   const dstW = Math.max(1, Math.min(MAX_UPLOAD_SIDE, Math.round(width / scale)));

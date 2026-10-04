@@ -33,6 +33,7 @@ export interface PhotoInfo {
   base64: string;
   dataUri: string;
   warning?: string;
+  reductionWarning?: string;
 }
 
 const UNSUPPORTED_FORMAT = "Formato no soportado: usa JPEG o PNG.";
@@ -158,6 +159,7 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
     base64,
     dataUri: `data:${mime};base64,${base64}`,
   };
+  if ("warning" in upload && upload.warning) info.reductionWarning = upload.warning;
   if (upload.width && upload.height) {
     info.width = upload.width;
     info.height = upload.height;

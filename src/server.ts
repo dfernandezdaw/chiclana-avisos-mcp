@@ -410,6 +410,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           height: photo.height,
           reducida: photo.reduced,
           exif_conservado: photo.exifPreserved,
+          ...(photo.reductionWarning ? { aviso_reduccion: photo.reductionWarning } : {}),
         };
         if (photo.gps && (args?.lat === undefined || args?.lng === undefined)) {
           lat = photo.gps.lat;
