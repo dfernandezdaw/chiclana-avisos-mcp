@@ -5,13 +5,10 @@ Servidor **Model Context Protocol (MCP)** para gestionar avisos e incidencias mu
 Inspirado en el diseño y patrones de seguridad de [madrid-avisos-mcp](https://github.com/Naroh091/madrid-avisos-mcp).
 
 Permite que un agente de IA pueda:
-- Interpretar el lenguaje natural del usuario ("Hay una farola rota frente al nº 23 de la Calle Ancha").
-- Obtener automáticamente las coordenadas **GPS de los metadatos EXIF de una fotografía** adjunta o geolocalizar por dirección.
-- Determinar la categoría y tipología oficial de avería de GECOR.
-- Validar el callejero oficial municipal.
-- Previsualizar el aviso en modo **dry-run**.
-- Registrar formalmente la incidencia ante el Ayuntamiento mediante confirmación explícita (`confirm: true`).
-- Consultar el histórico y estado de tramitación de incidencias.
+- Recibir una foto y dirección o referencia escrita, y extraer GPS EXIF cuando exista.
+- Elegir categorías oficiales GECOR y aclarar dudas antes de actuar.
+- Previsualizar un aviso sin enviarlo y registrarlo solo tras confirmación explícita del resumen exacto.
+- Consultar incidencias previamente registradas y su estado.
 
 ---
 
@@ -55,26 +52,28 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
 | `resolve_location` | Resuelve calles georreferenciadas por coordenadas GPS o busca en el callejero oficial de GECOR. |
 | `parse_photo_gps` | Extrae metadatos y coordenadas GPS EXIF de una imagen (fichero local o base64). |
-| `create_aviso_preview` | **Primera fase obligatoria, dry-run**: valida y congela la propuesta (incluidos los datos del peticionario); no sube fotos ni registra nada. Devuelve el resumen y `preview_token`. |
-| `create_aviso` | **Segunda fase**: solo registra el contenido exacto de una previsualización vigente tras aprobación explícita (`confirm: true`, `human_confirmed: true` y `preview_token`). |
+| `create_aviso_from_photo` | Flujo de dos fases: primero recibe descripción, categoría GECOR, ubicación y foto sin campos de confirmación y devuelve una previsualización; después acepta únicamente `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
 | `list_my_avisos` | Lista las incidencias creadas por el usuario con su estado actual de tramitación. |
 
 ---
 
 ## 🔒 Seguridad y Filosofía Dry-run
 
-Al igual que en `madrid-avisos-mcp`, **crear un aviso genera un ticket oficial en los servicios municipales**:
+El flujo de envío requiere confirmación explícita; la previsualización por sí sola no crea ningún aviso:
 
-1. El flujo es siempre de dos fases:
-   `parse_photo_gps` / `resolve_location` → `list_categories` → `create_aviso_preview` → mostrar el resumen al usuario.
-2. Si el usuario pide un cambio o ajuste, vuelve a llamar `create_aviso_preview` con la propuesta corregida y muestra el nuevo resumen. Cada previsualización se guarda solo en memoria del servidor, vence a los 10 minutos y su token es de un solo uso.
-3. Solo después de un **sí explícito** al resumen exacto, llama `create_aviso` con `preview_token`, `confirm: true` y `human_confirmed: true`. Esta herramienta no acepta campos editables del aviso: envía exactamente el payload congelado en esa previsualización. La foto solo se sube en esta fase.
-4. Sin confirmación, con un token vencido o reutilizado, no se registra nada. Si la llamada final falla después de consumir el token, genera una nueva previsualización y vuelve a pedir aprobación; no reintentes el token anterior.
+1. Para previsualizar, llama `create_aviso_from_photo` primero con los campos del aviso y la foto; no envíes token ni campos de confirmación. Usa `list_categories` para identificar categorías. Si usas `parse_photo_gps`, utiliza solo el campo `gps`; no muestres los metadatos EXIF `make`, `model` ni `takenAt`.
+2. Muestra un resumen breve de categoría, descripción, dirección/referencia, foto y ubicación disponible. No incluyas peticionario, tokens, payload crudo ni identidad privada.
+3. Espera un sí inequívoco al resumen exacto en la misma conversación. Ante cambios o respuesta ambigua, crea una previsualización nueva y vuelve a pedir confirmación.
+4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Si el guard está deshabilitado o falla la llamada, informa que el aviso NO se envió; nunca eludas el guard ni reintentes una escritura posiblemente completada.
+5. `estado: ENVIADO_EXITOSAMENTE` en la respuesta wrapper de Chiclana indica que la llamada MCP/API tuvo éxito, no que ese sea el estado de tramitación municipal. Comunica únicamente lo que devolvió la API: informa un número oficial de ticket o estado de tramitación solo si aparece en `resultado` devuelto por GECOR o está verificado inequívocamente; no lo adivines.
 
-### Identidad y ubicación en la previsualización
+La dirección textual no se geocodifica en este proyecto. Si la foto no aporta GPS EXIF, solicita un pin de Telegram o coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original/documento para conservar EXIF. `image_path` solo funciona cuando el proceso MCP puede acceder a la ruta local de Telegram; no se admite subida remota HTTP.
 
-- El MCP obtiene `Nombre`, `Email`, `Movil` y `CiudadanoID` de claims permitidas del `GECOR_TOKEN`, y los muestra en el resumen para que se revisen antes de autorizar. Si falta un dato o el token no contiene un formato reconocido, la previsualización falla de forma cerrada; no inventa valores ni usa datos de contacto vacíos. El token y los claims completos no se registran ni se muestran.
-- Para una dirección elegida en el mapa, pasa la dirección formateada en `desUbicacion`, además de latitud, longitud y número de portal cuando estén disponibles. El envío mapea latitud a `x` y longitud a `y`; `calleID: 0` es válido cuando no hay un ID del callejero GECOR. `resolve_location` es una ayuda independiente y puede no devolver coincidencias.
+### Skill de Hermes para Telegram
+
+El artefacto de instrucciones está en [`skill/SKILL.md`](skill/SKILL.md). La instalación es manual: copia ese archivo a `~/.hermes/skills/chiclana-avisos/SKILL.md`. Hermes y el proceso MCP deben ejecutarse en un entorno que permita al MCP acceder a la ruta local de la foto; no cambies configuración externa de Hermes o Telegram como parte de este proyecto.
+
+`GECOR_ALLOW_SUBMISSION=false` sigue siendo el valor seguro por defecto para desarrollo: las previsualizaciones no envían el aviso y el guard no debe eludirse.
 
 ---
 

@@ -208,6 +208,32 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           },
         },
         {
+          name: "create_aviso_from_photo",
+          description: "Flujo en dos fases. Para previsualizar, llama con los campos del aviso y la foto, sin preview_token ni campos de confirmación. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
+          inputSchema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              description: { type: "string", description: "Descripción concreta del desperfecto." },
+              tipoElementoID: { type: "number", description: "ID de elemento/subcategoría de list_categories." },
+              tipoIncID: { type: "number", description: "ID del tipo de incidencia de list_categories." },
+              desTipoElemento: { type: "string", description: "Nombre del elemento/subcategoría." },
+              tipoInc: { type: "string", description: "Nombre del tipo de incidencia." },
+              lat: { type: "number", description: "Latitud; puede omitirse si la foto aporta GPS EXIF." },
+              lng: { type: "number", description: "Longitud; puede omitirse si la foto aporta GPS EXIF." },
+              nomCalle: { type: "string", description: "Nombre de la calle de la dirección aportada." },
+              numCalle: { type: "number", description: "Número del portal, si se conoce." },
+              calleID: { type: "number", description: "ID de calle; usa 0 si no se resolvió en el callejero." },
+              desUbicacion: { type: "string", description: "Dirección formateada o referencia textual del lugar." },
+              image_path: { type: "string", description: "Ruta local de la foto accesible al proceso MCP." },
+              image_base64: { type: "string", description: "Foto en base64 si no se dispone de una ruta local." },
+              preview_token: { type: "string", description: "Solo para la segunda fase: token exacto devuelto por la previsualización." },
+              confirm: { type: "boolean", description: "Solo true tras el sí explícito al resumen exacto." },
+              human_confirmed: { type: "boolean", description: "Solo true tras la confirmación humana explícita." },
+            },
+          },
+        },
+        {
           name: "create_aviso",
           description: "Segunda fase únicamente: envía al municipio el payload inmutable de una previsualización vigente, solo si el usuario dijo sí explícitamente al resumen exacto. Requiere confirm:true, human_confirmed:true y el preview_token recién devuelto. Nunca acepta campos del aviso en esta fase; para hacer cambios, crea una nueva previsualización.",
           inputSchema: {
@@ -237,7 +263,22 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     const { name, arguments: args } = request.params;
 
     try {
-      switch (name) {
+      let facadePhase: "preview" | "submitted" | undefined;
+      let toolName = name;
+      if (name === "create_aviso_from_photo") {
+        const confirmationFields = ["preview_token", "confirm", "human_confirmed"];
+        const hasConfirmation = confirmationFields.some((key) => args?.[key] !== undefined);
+        if (hasConfirmation) {
+          if (Object.keys(args ?? {}).some((key) => !confirmationFields.includes(key))) throw new Error("La fase de confirmación solo acepta preview_token, confirm y human_confirmed.");
+          if (args?.confirm !== true || args?.human_confirmed !== true) throw new Error("Se requiere confirm:true y human_confirmed:true.");
+          facadePhase = "submitted";
+          toolName = "create_aviso";
+        } else {
+          facadePhase = "preview";
+          toolName = "create_aviso_preview";
+        }
+      }
+      switch (toolName) {
         case "whoami": {
           const ayto = await client.getAyuntamiento();
           const user = client.getCurrentUser();
@@ -517,7 +558,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             modo: "DRY-RUN (no se envía nada ni se suben fotos)",
             ayuntamiento: ayto.Nombre,
             ayuntamientoID: ayto.AyuntamientoID,
-            peticionario: payload.petitioner,
+            ...(facadePhase ? {} : { peticionario: payload.petitioner }),
             categoria: { tipoElementoID, desTipoElemento: payload.desTipoElemento, tipoIncID, tipoInc: payload.tipoInc },
             ubicacion: { lat, lng, nomCalle: payload.nomCalle, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
             descripcion: payload.description,
@@ -532,7 +573,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             content: [
               {
                 type: "text",
-                text: JSON.stringify(preview, null, 2),
+                text: JSON.stringify(facadePhase ? { phase: "preview", ...preview } : preview, null, 2),
               },
             ],
           };
@@ -585,6 +626,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
                 type: "text",
                 text: JSON.stringify(
                   {
+                    ...(facadePhase ? { phase: "submitted" } : {}),
                     estado: "ENVIADO_EXITOSAMENTE",
                     resultado,
                   },

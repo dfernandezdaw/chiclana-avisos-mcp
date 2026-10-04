@@ -21,6 +21,81 @@ function linkedTransports() {
   return [left, right];
 }
 
+test("photo-to-notice facade previews without writes and confirms only its bound payload", async () => {
+  const previous = process.env.GECOR_ALLOW_SUBMISSION;
+  process.env.GECOR_ALLOW_SUBMISSION = "true";
+  const calls = { upload: [], submit: [] };
+  const fakeClient = {
+    ayuntamientoID: 268,
+    getPetitionerIdentity() { return { Nombre: "Ada", Email: "ada@example.test", Movil: "123", CiudadanoID: 9 }; },
+    async getAyuntamiento() { return { AyuntamientoID: 268, Nombre: "Example" }; },
+    async guardarFotoBase64(dataUri) { calls.upload.push(dataUri); return "fixture-photo"; },
+    async nuevaIncidencia(payload) { calls.submit.push(payload); return { accepted: true }; },
+  };
+  const server = createMcpServer(fakeClient);
+  const client = new Client({ name: "test-client", version: "1.0" });
+  const [clientTransport, serverTransport] = linkedTransports();
+  try {
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const image = Buffer.from("fixture image").toString("base64");
+    const previewResult = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      description: "bound description", tipoElementoID: 1, tipoIncID: 2,
+      lat: 36, lng: -6, image_base64: image,
+    } });
+    assert.equal(previewResult.isError, undefined);
+    const preview = JSON.parse(previewResult.content[0].text);
+    assert.equal(preview.phase, "preview");
+    assert.ok(preview.preview_token);
+    assert.equal(Object.hasOwn(preview, "peticionario"), false);
+    for (const key of ["petitioner", "identity", "email", "phone", "raw_payload", "payload"]) {
+      assert.equal(Object.hasOwn(preview, key), false, `preview must omit ${key}`);
+    }
+    assert.deepEqual(calls, { upload: [], submit: [] });
+
+    const bad = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      preview_token: preview.preview_token, confirm: true, human_confirmed: false,
+    } });
+    assert.equal(bad.isError, true);
+    const changed = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      preview_token: preview.preview_token, confirm: true, human_confirmed: true, description: "changed",
+    } });
+    assert.equal(changed.isError, true);
+
+    process.env.GECOR_ALLOW_SUBMISSION = "false";
+    const disabled = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      preview_token: preview.preview_token, confirm: true, human_confirmed: true,
+    } });
+    assert.equal(disabled.isError, true);
+    assert.match(disabled.content[0].text, /GECOR_ALLOW_SUBMISSION=true/);
+    assert.deepEqual(calls, { upload: [], submit: [] });
+
+    process.env.GECOR_ALLOW_SUBMISSION = "true";
+    const accepted = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      preview_token: preview.preview_token, confirm: true, human_confirmed: true,
+    } });
+    assert.equal(accepted.isError, undefined);
+    const result = JSON.parse(accepted.content[0].text);
+    assert.equal(result.phase, "submitted");
+    assert.equal(calls.upload.length, 1);
+    assert.equal(calls.submit.length, 1);
+    assert.equal(calls.submit[0].desAveria, "bound description");
+    assert.equal(calls.submit[0].ciudadanoID, 9);
+    assert.equal(calls.submit[0].nombrePeticionario, "Ada");
+    assert.equal(calls.submit[0].email, "ada@example.test");
+    assert.equal(calls.submit[0].movil, "123");
+    assert.deepEqual(calls.submit[0].fotos, [{ rutaFoto: "fixture-photo" }]);
+    const replay = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      preview_token: preview.preview_token, confirm: true, human_confirmed: true,
+    } });
+    assert.equal(replay.isError, true);
+    assert.equal(calls.submit.length, 1);
+  } finally {
+    await client.close(); await server.close();
+    if (previous === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
+    else process.env.GECOR_ALLOW_SUBMISSION = previous;
+  }
+});
+
 test("blocked MCP submission preserves the exact preview for later opt-in", async () => {
   const previous = process.env.GECOR_ALLOW_SUBMISSION;
   delete process.env.GECOR_ALLOW_SUBMISSION;
@@ -45,6 +120,7 @@ test("blocked MCP submission preserves the exact preview for later opt-in", asyn
       },
     });
     const preview = JSON.parse(previewResult.content[0].text);
+    assert.equal(Object.hasOwn(preview, "peticionario"), true);
     const expectedPhotoDataUri = `data:image/png;base64,${Buffer.from("fixture image").toString("base64")}`;
     const args = { preview_token: preview.preview_token, confirm: true, human_confirmed: true };
 
