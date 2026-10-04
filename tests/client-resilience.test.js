@@ -283,3 +283,17 @@ test("incident creation HTTP error with a definite status is not reported as amb
   assert.doesNotMatch(text, /ambiguo/i);
   assert.match(text, /list_my_avisos/);
 });
+
+test("incident creation gateway 5xx is reported as an ambiguous outcome", async () => {
+  for (const status of [502, 504]) {
+    const { result } = await submitWith({
+      upload: async () => "fixture-photo",
+      submit: async () => { throw new GecorApiError(status, "Incident/nuevaIncidencia", "Bad Gateway"); },
+    });
+    assert.equal(result.isError, true);
+    const text = result.content[0].text;
+    assert.match(text, /ambiguo/i, `status ${status}`);
+    assert.match(text, /podría haberse creado/i);
+    assert.match(text, /list_my_avisos/);
+  }
+});

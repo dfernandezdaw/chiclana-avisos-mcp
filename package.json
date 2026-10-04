@@ -30,7 +30,8 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
-    "exif-parser": "^0.1.12"
+    "exif-parser": "^0.1.12",
+    "jpeg-js": "^0.4.4"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",

@@ -1,10 +1,12 @@
 /**
  * Utilidades para análisis de fotos y extracción de coordenadas GPS EXIF
  */
-import { open, realpath } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import exifParser from "exif-parser";
 import { getMaxPhotoBytes, getPhotoDirs } from "./config.js";
+import { readPngSize, reduceJpeg } from "./image.js";
 
 export type PhotoMime = "image/jpeg" | "image/png";
 
@@ -21,7 +23,12 @@ export interface PhotoInfo {
   model?: string;
   takenAt?: string;
   gps: PhotoGps | null;
+  /** Tamaño de la foto recibida */
   bytes: number;
+  /** Tamaño de la foto que se subirá (reducida si procede) */
+  uploadBytes: number;
+  reduced: boolean;
+  exifPreserved: boolean;
   mime: PhotoMime;
   base64: string;
   dataUri: string;
@@ -84,11 +91,16 @@ async function readConfinedFile(imagePath: string, maxBytes: number): Promise<Bu
   if (!roots.some((root) => isInside(root, real))) {
     throw new Error("image_path está fuera de los directorios permitidos para fotos. Configura GECOR_PHOTO_DIRS o usa image_base64.");
   }
-  const handle = await open(real, "r");
+  // Abrir una FIFO o un dispositivo puede bloquear indefinidamente: se descartan antes de open().
+  const notRegular = () => new Error("image_path debe apuntar a un fichero regular.");
+  const before = await stat(real);
+  if (!before.isFile()) throw notRegular();
+  if (before.size > maxBytes) throw tooLarge(maxBytes);
+  const handle = await open(real, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0));
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile()) throw new Error("image_path debe apuntar a un fichero regular.");
-    if (stat.size > maxBytes) throw tooLarge(maxBytes);
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) throw notRegular();
+    if (opened.size > maxBytes) throw tooLarge(maxBytes);
     const buf = await handle.readFile();
     if (buf.length > maxBytes) throw tooLarge(maxBytes);
     return buf;
@@ -131,14 +143,25 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
   const buf = await loadPhotoBuffer(imageBase64, imagePath);
   const mime = detectPhotoMime(buf);
   if (!mime) throw new Error(UNSUPPORTED_FORMAT);
-  const base64 = buf.toString("base64");
+  // Solo se reducen JPEG; el EXIF se lee siempre del buffer original.
+  const upload = mime === "image/jpeg"
+    ? reduceJpeg(buf)
+    : { buffer: buf, reduced: false, exifPreserved: false, ...readPngSize(buf) };
+  const base64 = upload.buffer.toString("base64");
   const info: PhotoInfo = {
     gps: null,
     bytes: buf.length,
+    uploadBytes: upload.buffer.length,
+    reduced: upload.reduced,
+    exifPreserved: upload.exifPreserved,
     mime,
     base64,
     dataUri: `data:${mime};base64,${base64}`,
   };
+  if (upload.width && upload.height) {
+    info.width = upload.width;
+    info.height = upload.height;
+  }
 
   if (mime !== "image/jpeg") {
     info.warning = "La imagen no es JPEG: no se pueden leer etiquetas EXIF automáticamente. Pasa las coordenadas lat/lng manualmente.";
@@ -150,7 +173,7 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
     const r = parser.parse();
     const tags = r.tags;
 
-    if (r.imageSize) {
+    if (r.imageSize && info.width === undefined) {
       info.width = r.imageSize.width;
       info.height = r.imageSize.height;
     }

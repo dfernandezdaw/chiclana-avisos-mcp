@@ -388,6 +388,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     let photoWarning: string | undefined;
     const hasPhoto = Boolean(imagePath || imageBase64);
     let photoDataUri: string | undefined;
+    let photoSummary: Record<string, unknown> | undefined;
     const petitioner = client.getPetitionerIdentity();
     const ayto = await client.getAyuntamiento();
 
@@ -401,6 +402,15 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
       try {
         const photo = await parsePhoto(imageBase64, imagePath);
         photoDataUri = photo.dataUri;
+        photoSummary = {
+          mime: photo.mime,
+          original_bytes: photo.bytes,
+          upload_bytes: photo.uploadBytes,
+          width: photo.width,
+          height: photo.height,
+          reducida: photo.reduced,
+          exif_conservado: photo.exifPreserved,
+        };
         if (photo.gps && (args?.lat === undefined || args?.lng === undefined)) {
           lat = photo.gps.lat;
           lng = photo.gps.lng;
@@ -448,6 +458,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
       ubicacion: { lat, lng, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
       descripcion: payload.description,
       foto_adjunta: hasPhoto,
+      foto: photoSummary,
       aviso_foto: photoWarning,
       preview_token: previewToken,
       expira_en_segundos: PREVIEW_TTL_MS / 1000,
@@ -510,8 +521,8 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         fotos,
       });
     } catch (err: any) {
-      // Solo un error HTTP con estado definido descarta que el aviso se haya creado.
-      const ambiguous = !(err instanceof GecorApiError && err.kind === "http");
+      // Solo un 4xx descarta que el aviso se haya creado; un 5xx (p. ej. 502/504 de pasarela) es tan ambiguo como un timeout.
+      const ambiguous = !(err instanceof GecorApiError && err.kind === "http" && err.status < 500);
       throw new Error([
         `Envío NO confirmado: ${err?.message || String(err)}`,
         fotos.length ? "La foto se subió a GECOR, pero GECOR no confirmó la creación del aviso." : "GECOR no confirmó la creación del aviso.",

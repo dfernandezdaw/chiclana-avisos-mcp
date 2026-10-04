@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, symlink, realpath } from "node:fs/promises";
+import { mkdtemp, writeFile, symlink, realpath, open } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parsePhoto, loadPhotoBuffer } from "../dist/photo.js";
@@ -136,5 +138,27 @@ test("oversize and invalid base64 are rejected", async () => {
     const info = await parsePhoto(wrapped);
     assert.equal(info.mime, "image/jpeg");
     assert.equal(info.bytes, JPEG.length);
+  });
+});
+
+test("FIFO inside allowed root is rejected without blocking", { skip: process.platform === "win32" }, async () => {
+  const { allowed } = await makeDirs();
+  const fifo = path.join(allowed, "tuberia.jpg");
+  execFileSync("mkfifo", [fifo]);
+  await withEnv({ GECOR_PHOTO_DIRS: allowed, GECOR_MAX_PHOTO_BYTES: undefined }, async () => {
+    let timer;
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve("timeout"), 2000); });
+    const outcome = await Promise.race([
+      loadPhotoBuffer(undefined, fifo).then(() => "accepted", (err) => err),
+      timeout,
+    ]);
+    clearTimeout(timer);
+    if (outcome === "timeout") {
+      // Desbloquea el open() colgado para que el proceso de test pueda terminar.
+      const writer = await open(fifo, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK);
+      await writer.close();
+    }
+    assert.ok(outcome instanceof Error, `expected rejection, got ${String(outcome)}`);
+    assert.match(outcome.message, /fichero regular/);
   });
 });
