@@ -115,7 +115,6 @@ export interface NuevaIncidenciaInput {
   token: string;
   ayuntamientoID: number;
   tipoProcedenciaID: number;
-  usuarioID?: number;
   ciudadanoID?: number;
   nombrePeticionario?: string;
   email?: string;
@@ -128,7 +127,6 @@ export interface NuevaIncidenciaInput {
   x: number;
   y: number;
   calleID?: number;
-  nomCalle?: string;
   numCalle?: number;
   desUbicacion?: string;
   edificioID?: number;
@@ -136,4 +134,8 @@ export interface NuevaIncidenciaInput {
   fotos?: Array<{ rutaFoto: string }>;
   tokenAyto?: string | null;
   estadoAvisoID?: number;
+  uni_cod?: string;
+  uni_direc?: string;
+  pro_cod?: string;
+  pro_nomb?: string;
 }

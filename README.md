@@ -51,8 +51,9 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 | `set_ayuntamiento` | Cambia el municipio activo dinámicamente (`ayuntamientoID`). |
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
 | `resolve_location` | Resuelve calles georreferenciadas por coordenadas GPS o busca en el callejero oficial de GECOR. |
-| `parse_photo_gps` | Extrae metadatos y coordenadas GPS EXIF de una imagen (fichero local o base64). |
-| `create_aviso_from_photo` | Flujo de dos fases: primero recibe descripción, categoría GECOR, ubicación y foto sin campos de confirmación y devuelve una previsualización; después acepta únicamente `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
+| `create_aviso_from_photo` | Flujo canónico en dos fases: recibe descripción, categoría GECOR, ubicación y foto; procesa EXIF durante la previsualización y, tras confirmación explícita, acepta `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
+| `create_aviso_preview` | Alias legacy/deprecado para clientes existentes; prepara una previsualización. Se recomienda `create_aviso_from_photo`. |
+| `create_aviso` | Alias legacy/deprecado para clientes existentes; confirma y envía una previsualización. Se recomienda `create_aviso_from_photo`. |
 | `list_my_avisos` | Lista las incidencias creadas por el usuario con su estado actual de tramitación. |
 
 ---
@@ -61,19 +62,19 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 
 El flujo de envío requiere confirmación explícita; la previsualización por sí sola no crea ningún aviso:
 
-1. Para previsualizar, llama `create_aviso_from_photo` primero con los campos del aviso y la foto; no envíes token ni campos de confirmación. Usa `list_categories` para identificar categorías. Si usas `parse_photo_gps`, utiliza solo el campo `gps`; no muestres los metadatos EXIF `make`, `model` ni `takenAt`.
+1. Usa el flujo canónico `create_aviso_from_photo`: llama primero con los campos del aviso y la foto, sin token ni campos de confirmación. Usa `list_categories` para identificar categorías. La herramienta procesa EXIF internamente durante la previsualización; no existe una herramienta independiente `parse_photo_gps`. `create_aviso_preview` y `create_aviso` se mantienen como alias legacy/deprecados por compatibilidad.
 2. Muestra un resumen breve de categoría, descripción, dirección/referencia, foto y ubicación disponible. No incluyas peticionario, tokens, payload crudo ni identidad privada.
 3. Espera un sí inequívoco al resumen exacto en la misma conversación. Ante cambios o respuesta ambigua, crea una previsualización nueva y vuelve a pedir confirmación.
 4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Si el guard está deshabilitado o falla la llamada, informa que el aviso NO se envió; nunca eludas el guard ni reintentes una escritura posiblemente completada.
 5. `estado: ENVIADO_EXITOSAMENTE` en la respuesta wrapper de Chiclana indica que la llamada MCP/API tuvo éxito, no que ese sea el estado de tramitación municipal. Comunica únicamente lo que devolvió la API: informa un número oficial de ticket o estado de tramitación solo si aparece en `resultado` devuelto por GECOR o está verificado inequívocamente; no lo adivines.
 
-La dirección textual no se geocodifica en este proyecto. Si la foto no aporta GPS EXIF, solicita un pin de Telegram o coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original/documento para conservar EXIF. `image_path` solo funciona cuando el proceso MCP puede acceder a la ruta local de Telegram; no se admite subida remota HTTP.
+La dirección textual no se geocodifica en este proyecto. Si la foto no aporta GPS EXIF, solicita coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original para conservar EXIF. `image_path` solo funciona cuando el proceso MCP puede acceder a la ruta local de la imagen; no se admite subida remota HTTP.
 
-### Skill de Hermes para Telegram
+### Skill reutilizable
 
-El artefacto de instrucciones está en [`skill/SKILL.md`](skill/SKILL.md). La instalación es manual: copia ese archivo a `~/.hermes/skills/chiclana-avisos/SKILL.md`. Hermes y el proceso MCP deben ejecutarse en un entorno que permita al MCP acceder a la ruta local de la foto; no cambies configuración externa de Hermes o Telegram como parte de este proyecto.
+El artefacto de instrucciones, independiente de cualquier plataforma o harness, está en [`skill/SKILL.md`](skill/SKILL.md). Su instalación es manual: colócalo en el directorio de skills que admita tu cliente. Mantén el proceso MCP en un entorno con acceso a las rutas locales que le proporciones; este proyecto no modifica configuraciones externas.
 
-`GECOR_ALLOW_SUBMISSION=false` sigue siendo el valor seguro por defecto para desarrollo: las previsualizaciones no envían el aviso y el guard no debe eludirse.
+El guard `GECOR_ALLOW_SUBMISSION` permanece fail-closed: solo el valor exacto `true` permite el envío confirmado. Dejalo ausente o en `false` durante desarrollo y pruebas; en el proceso MCP de producción, configuralo explícitamente como `true`. Si está deshabilitado, no se sube la foto ni se crea el aviso. No elimines este guard ni uses credenciales de producción en pruebas.
 
 ---
 

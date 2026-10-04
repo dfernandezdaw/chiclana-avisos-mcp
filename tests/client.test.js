@@ -51,7 +51,7 @@ test("incident creation sources municipality fields from detailed entity", async
     assert.equal(payload.ayuntamientoID, 268);
     assert.equal(payload.tipoProcedenciaID, 42);
     assert.equal(payload.tokenAyto, "fixture");
-    assert.equal(payload.usuarioID, 7);
+    assert.equal(payload.usuarioID, undefined);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -83,11 +83,12 @@ test("incident request matches official serialized municipality and address fiel
     client.ensureAuthenticated = async () => "fixture";
     await client.nuevaIncidencia({ tipoElementoID: 6, tipoIncID: 234, desAveria: "Pavimento", x: 36.4, y: -6.1, desUbicacion: "Calle Mayor, 4", numCalle: 4, calleID: 0 });
     assert.equal(fake.calls[1].options.body, JSON.stringify({
-      token: "fixture", ayuntamientoID: 268, tipoProcedenciaID: 42, usuarioID: 71, ciudadanoID: 0,
+      token: "fixture", ayuntamientoID: 268, tipoProcedenciaID: 42, ciudadanoID: 0,
       nombrePeticionario: "Ciudadano", email: "", movil: "", tipoElementoID: 6, desTipoElemento: "",
       tipoIncID: "234", tipoInc: "", desAveria: "Pavimento", x: 36.4, y: -6.1, calleID: 0,
-      nomCalle: "", numCalle: 4, desUbicacion: "Calle Mayor, 4", edificioID: 0, nombreEdificio: "",
-      fotos: [], tokenAyto: "municipality-token", estadoAvisoID: -1
+      numCalle: 4, desUbicacion: "Calle Mayor, 4", edificioID: 0, nombreEdificio: "",
+      fotos: [], tokenAyto: "municipality-token", estadoAvisoID: -1,
+      uni_cod: "", uni_direc: "", pro_cod: "", pro_nomb: ""
     }));
   } finally { fake.restore(); }
 });

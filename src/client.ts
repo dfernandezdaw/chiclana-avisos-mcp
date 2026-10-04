@@ -272,7 +272,6 @@ export class GecorClient {
       token,
       ayuntamientoID: ayto.AyuntamientoID,
       tipoProcedenciaID: input.tipoProcedenciaID ?? ayto.ProcedenciaWeb ?? 1390,
-      usuarioID: input.usuarioID ?? this.currentUser?.UsuarioID ?? ayto.UsuarioID,
       ciudadanoID: input.ciudadanoID ?? this.currentUser?.CiudadanoID ?? 0,
       nombrePeticionario: input.nombrePeticionario ?? this.currentUser?.Nombre ?? "Ciudadano",
       email: input.email ?? this.currentUser?.Email ?? "",
@@ -285,7 +284,6 @@ export class GecorClient {
       x: input.x,
       y: input.y,
       calleID: input.calleID ?? 0,
-      nomCalle: input.nomCalle ?? "",
       numCalle: input.numCalle ?? 0,
       desUbicacion: input.desUbicacion ?? "",
       edificioID: input.edificioID ?? 0,
@@ -293,6 +291,10 @@ export class GecorClient {
       fotos: input.fotos ?? [],
       tokenAyto: ayto.TokenAyuntamiento ?? null,
       estadoAvisoID: -1,
+      uni_cod: "",
+      uni_direc: "",
+      pro_cod: "",
+      pro_nomb: "",
     };
 
     const res = await this.post<any>("Incident/nuevaIncidencia", payload as unknown as Record<string, unknown>);

@@ -22,7 +22,6 @@ interface PendingAvisoPreview {
     tipoInc: string;
     lat: number;
     lng: number;
-    nomCalle: string;
     numCalle: number;
     calleID: number;
     desUbicacion: string;
@@ -128,25 +127,8 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           },
         },
         {
-          name: "parse_photo_gps",
-          description: "Extrae metadatos y coordenadas GPS EXIF de una imagen (ruta local o base64). Útil para geolocalizar incidencias automáticamente desde la fotografía.",
-          inputSchema: {
-            type: "object",
-            properties: {
-              image_path: {
-                type: "string",
-                description: "Ruta absoluta o relativa del fichero de imagen en el disco local.",
-              },
-              image_base64: {
-                type: "string",
-                description: "Cadena de la imagen en base64 (JPEG/PNG).",
-              },
-            },
-          },
-        },
-        {
           name: "create_aviso_preview",
-          description: "Primera fase obligatoria: prepara un aviso en dry-run, sin subir fotos ni enviar nada a GECOR. Devuelve el resumen editable y un preview_token temporal. Enseña el resumen al usuario; si quiere cambiar algo, genera otra previsualización. Nunca envíes sin un sí explícito a ese resumen exacto.",
+          description: "LEGACY/DEPRECADO para compatibilidad con clientes existentes. Primera fase de previsualización; se recomienda create_aviso_from_photo para el flujo completo en una sola herramienta MCP.",
           inputSchema: {
             type: "object",
             additionalProperties: false,
@@ -178,10 +160,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
               lng: {
                 type: "number",
                 description: "Longitud de la incidencia.",
-              },
-              nomCalle: {
-                type: "string",
-                description: "Nombre de la calle.",
               },
               numCalle: {
                 type: "number",
@@ -221,7 +199,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
               tipoInc: { type: "string", description: "Nombre del tipo de incidencia." },
               lat: { type: "number", description: "Latitud; puede omitirse si la foto aporta GPS EXIF." },
               lng: { type: "number", description: "Longitud; puede omitirse si la foto aporta GPS EXIF." },
-              nomCalle: { type: "string", description: "Nombre de la calle de la dirección aportada." },
               numCalle: { type: "number", description: "Número del portal, si se conoce." },
               calleID: { type: "number", description: "ID de calle; usa 0 si no se resolvió en el callejero." },
               desUbicacion: { type: "string", description: "Dirección formateada o referencia textual del lugar." },
@@ -235,7 +212,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         },
         {
           name: "create_aviso",
-          description: "Segunda fase únicamente: envía al municipio el payload inmutable de una previsualización vigente, solo si el usuario dijo sí explícitamente al resumen exacto. Requiere confirm:true, human_confirmed:true y el preview_token recién devuelto. Nunca acepta campos del aviso en esta fase; para hacer cambios, crea una nueva previsualización.",
+          description: "LEGACY/DEPRECADO para compatibilidad con clientes existentes. Envía una previsualización vigente tras confirmación explícita; se recomienda create_aviso_from_photo para el flujo completo en una sola herramienta MCP.",
           inputSchema: {
             type: "object",
             additionalProperties: false,
@@ -467,31 +444,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           throw new Error("Proporciona lat/lng o un street_name.");
         }
 
-        case "parse_photo_gps": {
-          const imagePath = typeof args?.image_path === "string" ? args.image_path : undefined;
-          const imageBase64 = typeof args?.image_base64 === "string" ? args.image_base64 : undefined;
-          const photoInfo = await parsePhoto(imageBase64, imagePath);
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    gps: photoInfo.gps,
-                    make: photoInfo.make,
-                    model: photoInfo.model,
-                    takenAt: photoInfo.takenAt,
-                    warning: photoInfo.warning,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-          };
-        }
-
         case "create_aviso_preview": {
           let lat = args?.lat !== undefined ? Number(args.lat) : undefined;
           let lng = args?.lng !== undefined ? Number(args.lng) : undefined;
@@ -537,7 +489,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             tipoInc: typeof args?.tipoInc === "string" ? args.tipoInc : "",
             lat,
             lng,
-            nomCalle: typeof args?.nomCalle === "string" ? args.nomCalle : "",
             numCalle: args?.numCalle === undefined ? 0 : Number(args.numCalle),
             calleID: args?.calleID === undefined ? 0 : Number(args.calleID),
             desUbicacion: typeof args?.desUbicacion === "string" ? args.desUbicacion : "",
@@ -560,7 +511,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             ayuntamientoID: ayto.AyuntamientoID,
             ...(facadePhase ? {} : { peticionario: payload.petitioner }),
             categoria: { tipoElementoID, desTipoElemento: payload.desTipoElemento, tipoIncID, tipoInc: payload.tipoInc },
-            ubicacion: { lat, lng, nomCalle: payload.nomCalle, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
+            ubicacion: { lat, lng, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
             descripcion: payload.description,
             foto_adjunta: hasPhoto,
             aviso_foto: photoWarning,
@@ -614,7 +565,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             x: payload.lat,
             y: payload.lng,
             calleID: payload.calleID,
-            nomCalle: payload.nomCalle,
             numCalle: payload.numCalle,
             desUbicacion: payload.desUbicacion,
             fotos,

@@ -1,46 +1,28 @@
 ---
 name: chiclana-avisos
-description: "Trigger: aviso Chiclana, incidencia municipal, reportar desperfecto por Telegram, GECOR. Gestiona avisos con foto mediante el MCP de Chiclana y confirmación segura."
-license: Apache-2.0
-metadata:
-  author: gentleman-programming
-  version: "1.0"
+description: "Trigger: aviso Chiclana, incidencia municipal, GECOR. Gestiona avisos con foto mediante herramientas MCP y confirmación segura."
 ---
 
-## Activation Contract
+## When to Use
 
-Activa esta skill cuando una persona quiera comunicar un desperfecto en Chiclana mediante Telegram y el MCP `chiclana-avisos` esté disponible.
+Activa esta skill cuando alguien quiera comunicar una incidencia municipal con el MCP de Chiclana.
 
-## Hard Rules
+## Procedure
 
-- Recibe una foto de Telegram y una dirección o referencia escrita. Prefiere la foto original/documento para conservar EXIF; nunca afirmes que la foto tiene GPS sin comprobarlo. Si usas `parse_photo_gps`, usa solo `gps` y nunca muestres EXIF `make`, `model` ni `takenAt`.
-- Usa `list_categories` para elegir IDs GECOR. Pregunta si categoría o descripción no están claras; no inventes.
-- La dirección escrita no se geocodifica en este proyecto. Si EXIF no aporta GPS, pide un pin de ubicación de Telegram o coordenadas explícitas. Nunca inventes coordenadas.
-- Usa `image_path` solo si el proceso MCP puede acceder a la ruta local de la foto de Telegram. No hay subida remota HTTP. Si no, usa la foto mediante un medio admitido por el MCP, como `image_base64`.
-- No muestres `peticionario`, tokens, payload crudo ni datos privados de identidad.
+1. Recibe una foto y una dirección o referencia. Usa `list_categories` para elegir la categoría oficial; aclara cualquier duda antes de continuar.
+2. Usa `image_path` solo si el proceso MCP puede leer esa ruta; de lo contrario, usa una imagen en un formato que sí pueda leer, como `image_base64`. No afirmes que una foto tiene GPS sin comprobarlo: `create_aviso_from_photo` procesa EXIF automáticamente durante la previsualización.
+3. Si no hay GPS en la foto ni coordenadas proporcionadas por la persona, solicita una ubicación explícita. Nunca inventes coordenadas. La dirección textual por sí sola no sustituye las coordenadas.
+4. Usa preferentemente `create_aviso_from_photo` para previsualizar. Presenta un resumen de categoría, descripción y ubicación, sin peticionario, token ni payload crudo.
+5. Envía únicamente después de un sí explícito al resumen exacto, usando el `preview_token` de esa previsualización y `confirm: true` y `human_confirmed: true`. Si hay cambios, vuelve a previsualizar y pide confirmación nueva.
+6. Informa de ticket o estado solo si GECOR lo devuelve o queda verificado. Si el guard o la API falla, indica claramente que no se envió. Nunca repitas una escritura de resultado ambiguo.
 
-## Decision Gates
+## Pitfalls
 
-| Situación | Acción |
-| --- | --- |
-| Categoría o descripción incierta | Pregunta antes de previsualizar |
-| Sin GPS EXIF ni ubicación explícita | Solicita pin o coordenadas; no llames aún |
-| Cambio o respuesta ambigua | Crea previsualización nueva y solicita confirmación otra vez |
-| Guard deshabilitado o fallo en envío | Di claramente que NO se envió; no eludas el guard ni reintentes una escritura posiblemente completada |
+- No uses ni inventes coordenadas basándote solo en una dirección.
+- No expongas identidad del peticionario, tokens ni payloads crudos.
+- No confundas una respuesta técnica de envío correcto con el estado municipal del aviso.
+- No reintentes una escritura cuyo resultado sea ambiguo.
 
-## Execution Steps
+## Verification
 
-1. Obtén la foto y dirección/referencia. Comprueba GPS EXIF; consulta `list_categories` y aclara dudas.
-2. Llama primero `create_aviso_from_photo` con descripción, IDs/nombres de categoría, ubicación disponible y foto; no incluyas `preview_token`, `confirm` ni `human_confirmed`.
-3. Presenta un resumen conciso con categoría, descripción, dirección/referencia, foto y ubicación disponible. No expongas identidad ni datos internos.
-4. Espera en la misma conversación de Telegram un sí inequívoco para ese resumen exacto. Cualquier cambio requiere nueva previsualización.
-5. Solo tras ese sí, llama al mismo tool con exactamente `preview_token`, `confirm: true` y `human_confirmed: true`.
-6. Tras el resultado, `estado: ENVIADO_EXITOSAMENTE` solo significa que la llamada MCP/API tuvo éxito, no que ese sea el estado de tramitación municipal. Informa un número oficial de ticket o estado de tramitación solo si aparece en `resultado` devuelto por GECOR o está verificado inequívocamente; nunca adivines.
-
-## Output Contract
-
-Comunica el resultado real del envío (o que NO se envió), sin revelar datos privados, tokens ni payload interno.
-
-## References
-
-- `../README.md` — contrato MCP e instalación manual.
+Antes del envío, comprueba que la persona confirmó explícitamente la previsualización exacta. Tras responder, limita los datos de ticket y estado a los devueltos o verificados por GECOR.

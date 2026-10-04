@@ -37,6 +37,12 @@ test("photo-to-notice facade previews without writes and confirms only its bound
   const [clientTransport, serverTransport] = linkedTransports();
   try {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const advertised = await client.listTools();
+    const toolNames = advertised.tools.map((tool) => tool.name);
+    assert.equal(toolNames.includes("parse_photo_gps"), false);
+    assert.equal(toolNames.includes("create_aviso_from_photo"), true);
+    assert.equal(toolNames.includes("create_aviso_preview"), true);
+    assert.equal(toolNames.includes("create_aviso"), true);
     const image = Buffer.from("fixture image").toString("base64");
     const previewResult = await client.callTool({ name: "create_aviso_from_photo", arguments: {
       description: "bound description", tipoElementoID: 1, tipoIncID: 2,
