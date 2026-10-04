@@ -42,17 +42,37 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 
 ---
 
+## ⚙️ Configuración
+
+Variables de entorno leídas por el proceso MCP:
+
+| Variable | Por defecto | Descripción |
+|---|---|---|
+| `GECOR_TOKEN` | (vacío) | Token de sesión GECOR. Obligatorio para `list_my_avisos` y para enviar avisos; también identifica al peticionario. |
+| `GECOR_AYTO_ID` | `268` | Municipio activo inicial (Chiclana de la Frontera). |
+| `GECOR_AYTO_NAME` | `Chiclana de la Frontera` | Solo se usa en el mensaje de arranque del servidor. |
+| `GECOR_ALLOW_SUBMISSION` | (ausente) | Guard de envío: solo el valor exacto `true` permite subir la foto y crear el aviso. |
+| `GECOR_API_URL` | `https://gecorapiwe.azurewebsites.net/api` | URL base de la API de GECOR. |
+| `GECOR_LANGUAGE` | `es` | Idioma de las consultas a GECOR (p. ej. listado de municipios). |
+| `GECOR_TIMEOUT_MS` | `20000` | Tiempo máximo por petición, en ms. Valores no válidos usan el defecto; el máximo es `120000`. |
+| `GECOR_PHOTO_DIRS` | tmp, `~/Downloads`, `~/Pictures`, `~/Desktop`, `~/.hermes` | Directorios permitidos para `image_path`, separados por `:` (`;` en Windows). Solo rutas absolutas; **sustituyen** a los valores por defecto. |
+| `GECOR_MAX_PHOTO_BYTES` | `20971520` (20 MB) | Tamaño máximo de la foto recibida. |
+
+`config.ts` también define `GECOR_INFO_URL`, `GECOR_BLOB_URL`, `GECOR_PROCEDENCIA_WEB` y `GECOR_PROCEDENCIA_MOVIL`, pero actualmente ningún código las usa: configurarlas no tiene efecto. La procedencia del aviso se toma de la ficha del ayuntamiento en GECOR.
+
+---
+
 ## 🛠️ Herramientas MCP Disponibles
 
 | Tool | Descripción |
 |---|---|
 | `whoami` | Muestra el municipio activo y si `GECOR_TOKEN` está configurado. |
-| `list_ayuntamientos` | Lista los 49 municipios soportados por la plataforma GECOR (con buscador). |
-| `set_ayuntamiento` | Cambia el municipio activo dinámicamente (`ayuntamientoID`). |
+| `list_ayuntamientos` | Lista los municipios que usan GECOR, con su `AyuntamientoID` (filtro opcional `search`). |
+| `set_ayuntamiento` | Cambia el municipio activo de la sesión MCP (`ayuntamientoID`). |
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
-| `resolve_location` | Resuelve calles georreferenciadas por coordenadas GPS o busca en el callejero oficial de GECOR. |
-| `create_aviso_from_photo` | Única herramienta pública para avisos: previsualiza con descripción, categoría GECOR, ubicación y una foto obligatoria (`image_path` o `image_base64`); procesa EXIF y, tras confirmación explícita, acepta `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
-| `list_my_avisos` | Lista las incidencias creadas por el usuario con su estado actual de tramitación. |
+| `resolve_location` | Con `lat`+`lng`, devuelve hasta 5 calles cercanas (radio 150 m) con `CalleID` y `Numero`. Con `street_name`, busca en el callejero oficial y devuelve hasta 10 coincidencias (`CalleID`, `Nombre`, `TipoVia`) **sin coordenadas**: no es geocodificación. |
+| `create_aviso_from_photo` | Única herramienta pública para avisos: previsualiza con descripción, categoría GECOR, ubicación y una foto obligatoria (`image_path` o `image_base64`, no ambos); procesa EXIF, reduce la foto si procede y devuelve un resumen con `foto` y un `preview_token` válido 10 minutos y de un solo uso. Tras confirmación explícita, acepta únicamente `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
+| `list_my_avisos` | Lista las incidencias registradas por el usuario del token con su estado de tramitación. Es la comprobación obligatoria tras un envío ambiguo. |
 
 ---
 
@@ -66,7 +86,23 @@ El flujo de envío requiere confirmación explícita; la previsualización por s
 4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Si el guard está deshabilitado o falla la llamada, informa que el aviso NO se envió; nunca eludas el guard ni reintentes una escritura posiblemente completada.
 5. `estado: ENVIADO_EXITOSAMENTE` en la respuesta wrapper de Chiclana indica que la llamada MCP/API tuvo éxito, no que ese sea el estado de tramitación municipal. Comunica únicamente lo que devolvió la API: informa un número oficial de ticket o estado de tramitación solo si aparece en `resultado` devuelto por GECOR o está verificado inequívocamente; no lo adivines.
 
-La dirección textual no se geocodifica en este proyecto. Si la foto no aporta GPS EXIF, solicita coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original para conservar EXIF. `image_path` solo funciona cuando el proceso MCP puede acceder a la ruta local de la imagen; no se admite subida remota HTTP.
+La dirección textual no se geocodifica en este proyecto: `resolve_location` por nombre de calle solo devuelve el `CalleID`. Si la foto no aporta GPS EXIF, solicita coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original para conservar EXIF. No se admite subida remota HTTP.
+
+### Fotos
+
+- Formatos: solo **JPEG** o **PNG**, detectados por su contenido. HEIC no se admite: conviértela antes (en iPhone, Ajustes › Cámara › Formatos › «Más compatible»).
+- Tamaño máximo: 20 MB (`GECOR_MAX_PHOTO_BYTES`).
+- `image_path` debe estar dentro de los directorios permitidos (`GECOR_PHOTO_DIRS`; por defecto el temporal del sistema, `~/Downloads`, `~/Pictures`, `~/Desktop` y `~/.hermes`) y apuntar a un fichero regular. Si no, usa `image_base64` (admite prefijo `data:image/...;base64,`).
+- GPS: solo se lee el EXIF de JPEG. Los PNG, las fotos reenviadas por apps que eliminan metadatos (p. ej. Telegram, salvo envío como archivo) y las capturas no aportan coordenadas.
+- Reducción: los JPEG cuyo lado mayor supera 2048 px se reducen a 2048 px (calidad 85) conservando los segmentos EXIF/XMP originales, incluida la orientación. Si la reducción no es posible, se sube el original y la previsualización lo indica en `foto.aviso_reduccion`. Los PNG se suben sin cambios.
+- La previsualización incluye `foto` con `mime`, `original_bytes`, `upload_bytes`, `width`, `height`, `reducida` y `exif_conservado`.
+
+### Errores y reintentos
+
+- Cada petición a GECOR expira tras `GECOR_TIMEOUT_MS` (20 s por defecto). Las consultas (`get*`) se reintentan una vez ante timeout, error de red o 5xx; las escrituras nunca se reintentan automáticamente.
+- El `preview_token` se consume antes de cualquier efecto: un mismo token no puede crear dos avisos.
+- Si falla la subida de la foto, no se crea ningún aviso; genera una nueva previsualización.
+- Si la creación devuelve «Envío NO confirmado» tras timeout, error de red o 5xx, el resultado es **ambiguo**: el aviso podría haberse creado. Consulta `list_my_avisos` y, solo si no aparece, crea una nueva previsualización y pide confirmación otra vez. Un 4xx sí descarta la creación.
 
 ### Skill reutilizable
 
@@ -78,7 +114,7 @@ El guard `GECOR_ALLOW_SUBMISSION` permanece fail-closed: solo el valor exacto `t
 
 ## 🌐 Soporte Multi-Ayuntamiento
 
-Aunque está preconfigurado por defecto para **Chiclana de la Frontera (ID 268)**, el servidor funciona con cualquier municipio que emplee GECOR (Torremolinos, Vélez-Málaga, Viladecans, etc.).
+Aunque está preconfigurado por defecto para **Chiclana de la Frontera (ID 268)**, el servidor está pensado para los municipios que usan GECOR (Torremolinos, Vélez-Málaga, Viladecans, etc.).
 
 Para listar todos los municipios disponibles:
 ```bash
@@ -100,7 +136,7 @@ Se incluye una utilidad de línea de comandos para realizar pruebas directas:
 node dist/cli.js ayuntamientos [filtro]    # Buscar municipios GECOR
 node dist/cli.js whoami                   # Ver estado de configuración
 node dist/cli.js categories [filtro]      # Ver categorías y tipologías
-node dist/cli.js photo <foto.jpg>         # Inspeccionar metadatos GPS EXIF de una foto
+node dist/cli.js photo <foto.jpg>         # Inspeccionar metadatos GPS EXIF (misma restricción de directorios)
 node dist/cli.js calles [filtro]          # Consultar callejero oficial
 ```
 
