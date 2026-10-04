@@ -127,67 +127,8 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           },
         },
         {
-          name: "create_aviso_preview",
-          description: "LEGACY/DEPRECADO para compatibilidad con clientes existentes. Primera fase de previsualización; se recomienda create_aviso_from_photo para el flujo completo en una sola herramienta MCP.",
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              description: {
-                type: "string",
-                description: "Descripción detallada del desperfecto o problema.",
-              },
-              tipoElementoID: {
-                type: "number",
-                description: "ID del elemento/subcategoría obtenido de list_categories.",
-              },
-              tipoIncID: {
-                type: "number",
-                description: "ID del tipo de incidencia obtenido de list_categories.",
-              },
-              desTipoElemento: {
-                type: "string",
-                description: "Nombre del elemento/subcategoría.",
-              },
-              tipoInc: {
-                type: "string",
-                description: "Nombre del tipo de incidencia.",
-              },
-              lat: {
-                type: "number",
-                description: "Latitud de la incidencia.",
-              },
-              lng: {
-                type: "number",
-                description: "Longitud de la incidencia.",
-              },
-              numCalle: {
-                type: "number",
-                description: "Número de portal o altura de la calle.",
-              },
-              calleID: {
-                type: "number",
-                description: "ID de la calle en el callejero oficial si se obtuvo de resolve_location.",
-              },
-              desUbicacion: {
-                type: "string",
-                description: "Detalle adicional de la ubicación (ej: 'frente al parque infantil').",
-              },
-              image_path: {
-                type: "string",
-                description: "Ruta local de una fotografía a adjuntar.",
-              },
-              image_base64: {
-                type: "string",
-                description: "Imagen en base64 a adjuntar.",
-              },
-            },
-            required: ["description", "tipoElementoID", "tipoIncID"],
-          },
-        },
-        {
           name: "create_aviso_from_photo",
-          description: "Flujo en dos fases. Para previsualizar, llama con los campos del aviso y la foto, sin preview_token ni campos de confirmación. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
+          description: "Única herramienta para avisos, en dos fases. Para previsualizar, llama con los campos del aviso y una foto obligatoria (image_path o image_base64), sin preview_token ni campos de confirmación. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
           inputSchema: {
             type: "object",
             additionalProperties: false,
@@ -211,20 +152,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           },
         },
         {
-          name: "create_aviso",
-          description: "LEGACY/DEPRECADO para compatibilidad con clientes existentes. Envía una previsualización vigente tras confirmación explícita; se recomienda create_aviso_from_photo para el flujo completo en una sola herramienta MCP.",
-          inputSchema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              preview_token: { type: "string", description: "Token opaco de una previsualización vigente." },
-              confirm: { type: "boolean", description: "true solo tras el sí explícito del usuario al resumen mostrado." },
-              human_confirmed: { type: "boolean", description: "true solo cuando el usuario confirmó explícitamente el resumen exacto." },
-            },
-            required: ["preview_token", "confirm", "human_confirmed"],
-          },
-        },
-        {
           name: "list_my_avisos",
           description: "Consulta los avisos previamente registrados por el usuario para consultar su estado de tramitación.",
           inputSchema: {
@@ -241,7 +168,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
 
     try {
       let facadePhase: "preview" | "submitted" | undefined;
-      let toolName = name;
+      let action = name;
       if (name === "create_aviso_from_photo") {
         const confirmationFields = ["preview_token", "confirm", "human_confirmed"];
         const hasConfirmation = confirmationFields.some((key) => args?.[key] !== undefined);
@@ -249,13 +176,13 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           if (Object.keys(args ?? {}).some((key) => !confirmationFields.includes(key))) throw new Error("La fase de confirmación solo acepta preview_token, confirm y human_confirmed.");
           if (args?.confirm !== true || args?.human_confirmed !== true) throw new Error("Se requiere confirm:true y human_confirmed:true.");
           facadePhase = "submitted";
-          toolName = "create_aviso";
+          action = "submit";
         } else {
           facadePhase = "preview";
-          toolName = "create_aviso_preview";
+          action = "preview";
         }
       }
-      switch (toolName) {
+      switch (action) {
         case "whoami": {
           const ayto = await client.getAyuntamiento();
           const user = client.getCurrentUser();
@@ -444,11 +371,12 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           throw new Error("Proporciona lat/lng o un street_name.");
         }
 
-        case "create_aviso_preview": {
+        case "preview": {
           let lat = args?.lat !== undefined ? Number(args.lat) : undefined;
           let lng = args?.lng !== undefined ? Number(args.lng) : undefined;
-          const imagePath = typeof args?.image_path === "string" ? args.image_path : undefined;
-          const imageBase64 = typeof args?.image_base64 === "string" ? args.image_base64 : undefined;
+          const imagePath = typeof args?.image_path === "string" && args.image_path.trim() ? args.image_path : undefined;
+          const imageBase64 = typeof args?.image_base64 === "string" && args.image_base64.trim() ? args.image_base64 : undefined;
+          if (!imagePath && !imageBase64) throw new Error("Se requiere una foto mediante image_path o image_base64 para previsualizar.");
 
           let photoWarning: string | undefined;
           const hasPhoto = Boolean(imagePath || imageBase64);
@@ -517,7 +445,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
             aviso_foto: photoWarning,
             preview_token: previewToken,
             expira_en_segundos: PREVIEW_TTL_MS / 1000,
-            instruccion: "Muestra este resumen al usuario y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Envía solo ese sí exacto con create_aviso, confirm:true, human_confirmed:true y este preview_token.",
+            instruccion: "Muestra este resumen al usuario y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Confirma solo ese sí exacto con create_aviso_from_photo, confirm:true, human_confirmed:true y este preview_token.",
           };
 
           return {
@@ -530,7 +458,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           };
         }
 
-        case "create_aviso": {
+        case "submit": {
           if (args?.confirm !== true || args?.human_confirmed !== true) {
             throw new Error("No enviado. Se requiere el sí explícito del usuario al resumen mostrado (confirm:true y human_confirmed:true).");
           }

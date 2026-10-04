@@ -41,8 +41,20 @@ test("photo-to-notice facade previews without writes and confirms only its bound
     const toolNames = advertised.tools.map((tool) => tool.name);
     assert.equal(toolNames.includes("parse_photo_gps"), false);
     assert.equal(toolNames.includes("create_aviso_from_photo"), true);
-    assert.equal(toolNames.includes("create_aviso_preview"), true);
-    assert.equal(toolNames.includes("create_aviso"), true);
+    assert.equal(toolNames.includes("create_aviso_preview"), false);
+    assert.equal(toolNames.includes("create_aviso"), false);
+    const noPhoto = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+      description: "missing photo", tipoElementoID: 1, tipoIncID: 2, lat: 36, lng: -6,
+    } });
+    assert.equal(noPhoto.isError, true);
+    for (const emptyPhoto of [{ image_path: "  " }, { image_base64: "\n" }]) {
+      const rejected = await client.callTool({ name: "create_aviso_from_photo", arguments: {
+        description: "empty photo", tipoElementoID: 1, tipoIncID: 2, lat: 36, lng: -6, ...emptyPhoto,
+      } });
+      assert.equal(rejected.isError, true);
+      assert.deepEqual(calls, { upload: [], submit: [] });
+    }
+    assert.deepEqual(calls, { upload: [], submit: [] });
     const image = Buffer.from("fixture image").toString("base64");
     const previewResult = await client.callTool({ name: "create_aviso_from_photo", arguments: {
       description: "bound description", tipoElementoID: 1, tipoIncID: 2,
@@ -102,7 +114,7 @@ test("photo-to-notice facade previews without writes and confirms only its bound
   }
 });
 
-test("blocked MCP submission preserves the exact preview for later opt-in", async () => {
+test("blocked MCP submission preserves the exact photo-backed preview for later opt-in", async () => {
   const previous = process.env.GECOR_ALLOW_SUBMISSION;
   delete process.env.GECOR_ALLOW_SUBMISSION;
   const calls = { upload: 0, submit: 0, uploadedPhoto: undefined };
@@ -119,28 +131,29 @@ test("blocked MCP submission preserves the exact preview for later opt-in", asyn
   try {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     const previewResult = await client.callTool({
-      name: "create_aviso_preview",
+      name: "create_aviso_from_photo",
       arguments: {
         description: "fixture description", tipoElementoID: 1, tipoIncID: 2,
         lat: 36, lng: -6, image_base64: Buffer.from("fixture image").toString("base64"),
       },
     });
     const preview = JSON.parse(previewResult.content[0].text);
-    assert.equal(Object.hasOwn(preview, "peticionario"), true);
+    assert.equal(preview.phase, "preview");
+    assert.equal(Object.hasOwn(preview, "peticionario"), false);
     const expectedPhotoDataUri = `data:image/png;base64,${Buffer.from("fixture image").toString("base64")}`;
     const args = { preview_token: preview.preview_token, confirm: true, human_confirmed: true };
 
     for (const disabledValue of [undefined, "false"]) {
       if (disabledValue === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
       else process.env.GECOR_ALLOW_SUBMISSION = disabledValue;
-      const blocked = await client.callTool({ name: "create_aviso", arguments: args });
+      const blocked = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
       assert.equal(blocked.isError, true);
       assert.match(blocked.content[0].text, /GECOR_ALLOW_SUBMISSION=true/);
       assert.deepEqual(calls, { upload: 0, submit: 0, uploadedPhoto: undefined });
     }
 
     process.env.GECOR_ALLOW_SUBMISSION = "true";
-    const accepted = await client.callTool({ name: "create_aviso", arguments: args });
+    const accepted = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
     assert.equal(accepted.isError, undefined);
     assert.deepEqual(calls, { upload: 1, submit: 1, uploadedPhoto: expectedPhotoDataUri });
   } finally {

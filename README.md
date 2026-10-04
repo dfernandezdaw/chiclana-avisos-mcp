@@ -51,9 +51,7 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 | `set_ayuntamiento` | Cambia el municipio activo dinámicamente (`ayuntamientoID`). |
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
 | `resolve_location` | Resuelve calles georreferenciadas por coordenadas GPS o busca en el callejero oficial de GECOR. |
-| `create_aviso_from_photo` | Flujo canónico en dos fases: recibe descripción, categoría GECOR, ubicación y foto; procesa EXIF durante la previsualización y, tras confirmación explícita, acepta `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
-| `create_aviso_preview` | Alias legacy/deprecado para clientes existentes; prepara una previsualización. Se recomienda `create_aviso_from_photo`. |
-| `create_aviso` | Alias legacy/deprecado para clientes existentes; confirma y envía una previsualización. Se recomienda `create_aviso_from_photo`. |
+| `create_aviso_from_photo` | Única herramienta pública para avisos: previsualiza con descripción, categoría GECOR, ubicación y una foto obligatoria (`image_path` o `image_base64`); procesa EXIF y, tras confirmación explícita, acepta `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
 | `list_my_avisos` | Lista las incidencias creadas por el usuario con su estado actual de tramitación. |
 
 ---
@@ -62,7 +60,7 @@ Configura el token directamente en `env` para **cada entrada MCP** que inicie es
 
 El flujo de envío requiere confirmación explícita; la previsualización por sí sola no crea ningún aviso:
 
-1. Usa el flujo canónico `create_aviso_from_photo`: llama primero con los campos del aviso y la foto, sin token ni campos de confirmación. Usa `list_categories` para identificar categorías. La herramienta procesa EXIF internamente durante la previsualización; no existe una herramienta independiente `parse_photo_gps`. `create_aviso_preview` y `create_aviso` se mantienen como alias legacy/deprecados por compatibilidad.
+1. Usa `create_aviso_from_photo` para ambas fases. Para previsualizar, envía los campos del aviso y una foto no vacía mediante `image_path` o `image_base64`, sin token ni campos de confirmación. Usa `list_categories` para identificar categorías. La herramienta procesa EXIF internamente durante la previsualización; no existe una herramienta independiente `parse_photo_gps`.
 2. Muestra un resumen breve de categoría, descripción, dirección/referencia, foto y ubicación disponible. No incluyas peticionario, tokens, payload crudo ni identidad privada.
 3. Espera un sí inequívoco al resumen exacto en la misma conversación. Ante cambios o respuesta ambigua, crea una previsualización nueva y vuelve a pedir confirmación.
 4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Si el guard está deshabilitado o falla la llamada, informa que el aviso NO se envió; nunca eludas el guard ni reintentes una escritura posiblemente completada.
