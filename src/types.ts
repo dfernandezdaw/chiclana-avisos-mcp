@@ -115,10 +115,10 @@ export interface NuevaIncidenciaInput {
   token: string;
   ayuntamientoID: number;
   tipoProcedenciaID: number;
-  ciudadanoID?: number;
-  nombrePeticionario?: string;
-  email?: string;
-  movil?: string;
+  ciudadanoID: number;
+  nombrePeticionario: string;
+  email: string;
+  movil: string;
   tipoElementoID: number;
   desTipoElemento?: string;
   tipoIncID: string;

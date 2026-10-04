@@ -50,15 +50,13 @@ Variables de entorno leídas por el proceso MCP:
 |---|---|---|
 | `GECOR_TOKEN` | (vacío) | Token de sesión GECOR. Obligatorio para `list_my_avisos` y para enviar avisos; también identifica al peticionario. |
 | `GECOR_AYTO_ID` | `268` | Municipio activo inicial (Chiclana de la Frontera). |
-| `GECOR_AYTO_NAME` | `Chiclana de la Frontera` | Solo se usa en el mensaje de arranque del servidor. |
 | `GECOR_ALLOW_SUBMISSION` | (ausente) | Guard de envío: solo el valor exacto `true` permite subir la foto y crear el aviso. |
 | `GECOR_API_URL` | `https://gecorapiwe.azurewebsites.net/api` | URL base de la API de GECOR. |
+| `GECOR_PROCEDENCIA_WEB` | `1390` | Procedencia del aviso cuando la ficha del ayuntamiento en GECOR no incluye `ProcedenciaWeb`. Valores que no sean enteros positivos usan el defecto. |
 | `GECOR_LANGUAGE` | `es` | Idioma de las consultas a GECOR (p. ej. listado de municipios). |
 | `GECOR_TIMEOUT_MS` | `20000` | Tiempo máximo por petición, en ms. Valores no válidos usan el defecto; el máximo es `120000`. |
 | `GECOR_PHOTO_DIRS` | tmp, `~/Downloads`, `~/Pictures`, `~/Desktop`, `~/.hermes` | Directorios permitidos para `image_path`, separados por `:` (`;` en Windows). Solo rutas absolutas; **sustituyen** a los valores por defecto. |
 | `GECOR_MAX_PHOTO_BYTES` | `20971520` (20 MB) | Tamaño máximo de la foto recibida. |
-
-`config.ts` también define `GECOR_INFO_URL`, `GECOR_BLOB_URL`, `GECOR_PROCEDENCIA_WEB` y `GECOR_PROCEDENCIA_MOVIL`, pero actualmente ningún código las usa: configurarlas no tiene efecto. La procedencia del aviso se toma de la ficha del ayuntamiento en GECOR.
 
 ---
 

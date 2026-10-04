@@ -7,10 +7,10 @@ import {
   DEFAULT_LANGUAGE,
   GECOR_TOKEN,
   getGecorTimeoutMs,
+  getProcedenciaWeb,
 } from "./config.js";
 import type {
   GecorAyuntamiento,
-  GecorUser,
   GecorTipologiaResponse,
   GecorCalle,
   GecorEdificio,
@@ -142,7 +142,6 @@ export class GecorClient {
   public ayuntamientoID: number;
   public language: string;
   private baseUrl: string;
-  private currentUser: GecorUser | null = null;
   private currentAyuntamiento: GecorAyuntamiento | null = null;
 
   constructor(opts: GecorClientOptions = {}) {
@@ -163,10 +162,6 @@ export class GecorClient {
 
   getPetitionerIdentity(): PetitionerIdentity {
     return extractPetitionerIdentity(this.token);
-  }
-
-  getCurrentUser(): GecorUser | null {
-    return this.currentUser;
   }
 
   private async post<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
@@ -355,17 +350,22 @@ export class GecorClient {
     ayuntamientoID?: number;
     tipoProcedenciaID?: number;
   }): Promise<Record<string, unknown>> {
+    // El peticionario solo procede de la identidad del JWT; sin valores por defecto.
+    if (!Number.isSafeInteger(input.ciudadanoID) || input.ciudadanoID <= 0 ||
+        [input.nombrePeticionario, input.email, input.movil].some((value) => typeof value !== "string" || !value.trim())) {
+      throw new Error("Falta la identidad del peticionario (ciudadanoID, nombre, email y móvil) para registrar el aviso.");
+    }
     const token = await this.ensureAuthenticated();
     const ayto = await this.getAyuntamiento(input.ayuntamientoID ?? this.ayuntamientoID);
 
     const payload: NuevaIncidenciaInput = {
       token,
       ayuntamientoID: ayto.AyuntamientoID,
-      tipoProcedenciaID: input.tipoProcedenciaID ?? ayto.ProcedenciaWeb ?? 1390,
-      ciudadanoID: input.ciudadanoID ?? this.currentUser?.CiudadanoID ?? 0,
-      nombrePeticionario: input.nombrePeticionario ?? this.currentUser?.Nombre ?? "Ciudadano",
-      email: input.email ?? this.currentUser?.Email ?? "",
-      movil: input.movil ?? this.currentUser?.Movil ?? "",
+      tipoProcedenciaID: input.tipoProcedenciaID ?? ayto.ProcedenciaWeb ?? getProcedenciaWeb(),
+      ciudadanoID: input.ciudadanoID,
+      nombrePeticionario: input.nombrePeticionario,
+      email: input.email,
+      movil: input.movil,
       tipoElementoID: input.tipoElementoID,
       desTipoElemento: input.desTipoElemento ?? "",
       tipoIncID: String(input.tipoIncID),

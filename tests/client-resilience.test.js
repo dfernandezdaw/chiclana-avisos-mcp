@@ -100,7 +100,7 @@ test("write endpoints are never retried on 5xx or timeout", async () => {
   const entity = { AyuntamientoID: 268, ProcedenciaWeb: 42, TokenAyuntamiento: "fixture" };
   let fake = stubFetch((url) => url.endsWith("getAyuntamientoByAytoID") ? { body: entity } : { status: 503, body: "busy" });
   try {
-    await assert.rejects(testClient().nuevaIncidencia({ tipoElementoID: 1, tipoIncID: 2, desAveria: "d", x: 1, y: 2 }), GecorApiError);
+    await assert.rejects(testClient().nuevaIncidencia({ ciudadanoID: 9, nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 1, tipoIncID: 2, desAveria: "d", x: 1, y: 2 }), GecorApiError);
     assert.equal(fake.endpointCalls("nuevaIncidencia"), 1);
     await assert.rejects(testClient().guardarFotoBase64("data:image/png;base64,QUJD"), GecorApiError);
     assert.equal(fake.endpointCalls("guardarFotoBase64"), 1);
@@ -109,7 +109,7 @@ test("write endpoints are never retried on 5xx or timeout", async () => {
   const restoreEnv = withTimeoutEnv("30");
   fake = stubFetch((url) => url.endsWith("getAyuntamientoByAytoID") ? { body: entity } : "hang");
   try {
-    await assert.rejects(testClient().nuevaIncidencia({ tipoElementoID: 1, tipoIncID: 2, desAveria: "d", x: 1, y: 2 }), { kind: "timeout" });
+    await assert.rejects(testClient().nuevaIncidencia({ ciudadanoID: 9, nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 1, tipoIncID: 2, desAveria: "d", x: 1, y: 2 }), { kind: "timeout" });
     assert.equal(fake.endpointCalls("nuevaIncidencia"), 1);
   } finally { fake.restore(); restoreEnv(); }
 });
@@ -248,7 +248,7 @@ test("GECOR error text redacts JSON-escaped forms of sensitive request values", 
       ? { body: entity }
       : { status: 400, body: `{"Message":"Invalid desAveria: ${form}"}` });
     try {
-      await assert.rejects(testClient().nuevaIncidencia({ tipoElementoID: 1, tipoIncID: 2, desAveria, x: 1, y: 2 }), (err) => {
+      await assert.rejects(testClient().nuevaIncidencia({ ciudadanoID: 9, nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 1, tipoIncID: 2, desAveria, x: 1, y: 2 }), (err) => {
         assert.ok(err instanceof GecorApiError);
         assert.match(err.message, /Invalid desAveria: \[redactado\]/, `form leaked: ${form}`);
         for (const text of [err.message, String(err.body)]) {

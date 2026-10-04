@@ -11,7 +11,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { GecorApiError, GecorClient } from "./client.js";
 import { parsePhoto, type PhotoInfo } from "./photo.js";
-import { DEFAULT_AYTO_ID, DEFAULT_AYTO_NAME } from "./config.js";
+import { DEFAULT_AYTO_ID, PACKAGE_VERSION } from "./config.js";
 
 interface PendingAvisoPreview {
   payload: {
@@ -71,7 +71,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
   const server = new Server(
     {
       name: "chiclana-avisos-mcp",
-      version: "1.0.0",
+      version: PACKAGE_VERSION,
     },
     {
       capabilities: {
@@ -191,7 +191,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
   const toolHandlers: Record<string, ToolHandler> = {
     whoami: async () => {
       const ayto = await client.getAyuntamiento();
-      const user = client.getCurrentUser();
       return {
         content: [
           {
@@ -205,14 +204,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
                   Longitud: ayto.Longitud,
                 },
                 autenticado: client.hasToken(),
-                usuario: user
-                  ? {
-                      UsuarioID: user.UsuarioID,
-                      Nombre: user.Nombre,
-                      Email: user.Email,
-                      Activo: user.Activo,
-                    }
-                  : null,
               },
               null,
               2,
@@ -619,5 +610,5 @@ export async function runServer(): Promise<void> {
   const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Servidor MCP chiclana-avisos-mcp iniciado (Ayto ID: ${DEFAULT_AYTO_ID} - ${DEFAULT_AYTO_NAME}).`);
+  console.error(`Servidor MCP chiclana-avisos-mcp iniciado (Ayto ID: ${DEFAULT_AYTO_ID}).`);
 }

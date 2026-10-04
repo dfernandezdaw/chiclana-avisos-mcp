@@ -27,13 +27,8 @@ async function main() {
 
       case "whoami": {
         const ayto = await client.getAyuntamiento();
-        const user = client.getCurrentUser();
         console.log("Ayuntamiento configurado:", ayto.Nombre, `(ID: ${ayto.AyuntamientoID})`);
         console.log("Tiene token activo:", client.hasToken());
-        if (user) {
-          console.log("Usuario:", user.Nombre || user.Email || user.UsuarioID);
-          console.log("Email:", user.Email);
-        }
         break;
       }
 

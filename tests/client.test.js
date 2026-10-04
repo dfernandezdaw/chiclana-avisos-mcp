@@ -45,7 +45,7 @@ test("incident creation sources municipality fields from detailed entity", async
   try {
     const client = new GecorClient({ ayuntamientoID: 268, baseUrl: "https://example.invalid" });
     client.ensureAuthenticated = async () => "fixture-auth";
-    await client.nuevaIncidencia({ tipoElementoID: 1, tipoIncID: 2, desAveria: "fixture", x: 1, y: 2 });
+    await client.nuevaIncidencia({ ciudadanoID: 9, nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 1, tipoIncID: 2, desAveria: "fixture", x: 1, y: 2 });
     assert.deepEqual(calls.map((call) => call.url.split("/").at(-1)), ["getAyuntamientoByAytoID", "nuevaIncidencia"]);
     const payload = calls[1].body;
     assert.equal(payload.ayuntamientoID, 268);
@@ -81,10 +81,10 @@ test("incident request matches official serialized municipality and address fiel
   try {
     const client = new GecorClient({ ayuntamientoID: 268, baseUrl: "https://example.invalid" });
     client.ensureAuthenticated = async () => "fixture";
-    await client.nuevaIncidencia({ tipoElementoID: 6, tipoIncID: 234, desAveria: "Pavimento", x: 36.4, y: -6.1, desUbicacion: "Calle Mayor, 4", numCalle: 4, calleID: 0 });
+    await client.nuevaIncidencia({ ciudadanoID: 9, nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 6, tipoIncID: 234, desAveria: "Pavimento", x: 36.4, y: -6.1, desUbicacion: "Calle Mayor, 4", numCalle: 4, calleID: 0 });
     assert.equal(fake.calls[1].options.body, JSON.stringify({
-      token: "fixture", ayuntamientoID: 268, tipoProcedenciaID: 42, ciudadanoID: 0,
-      nombrePeticionario: "Ciudadano", email: "", movil: "", tipoElementoID: 6, desTipoElemento: "",
+      token: "fixture", ayuntamientoID: 268, tipoProcedenciaID: 42, ciudadanoID: 9,
+      nombrePeticionario: "Ada", email: "ada@example.test", movil: "600111222", tipoElementoID: 6, desTipoElemento: "",
       tipoIncID: "234", tipoInc: "", desAveria: "Pavimento", x: 36.4, y: -6.1, calleID: 0,
       numCalle: 4, desUbicacion: "Calle Mayor, 4", edificioID: 0, nombreEdificio: "",
       fotos: [], tokenAyto: "municipality-token", estadoAvisoID: -1,
