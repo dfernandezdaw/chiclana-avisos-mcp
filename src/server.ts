@@ -9,7 +9,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { GecorClient } from "./client.js";
+import { GecorApiError, GecorClient } from "./client.js";
 import { parsePhoto } from "./photo.js";
 import { DEFAULT_AYTO_ID, DEFAULT_AYTO_NAME } from "./config.js";
 
@@ -481,28 +481,43 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
 
     const fotos: Array<{ rutaFoto: string }> = [];
     if (preview.photoDataUri) {
-      const ruta = await client.guardarFotoBase64(preview.photoDataUri);
-      fotos.push({ rutaFoto: ruta });
+      try {
+        const ruta = await client.guardarFotoBase64(preview.photoDataUri);
+        fotos.push({ rutaFoto: ruta });
+      } catch (err: any) {
+        throw new Error(`No se ha creado ningún aviso: falló la subida de la foto (${err?.message || String(err)}). La previsualización ya se consumió; crea una nueva previsualización y solicita confirmación otra vez.`);
+      }
     }
     const payload = preview.payload;
-    const resultado = await client.nuevaIncidencia({
-      ayuntamientoID: preview.ayuntamientoID,
-      ciudadanoID: payload.petitioner.CiudadanoID,
-      nombrePeticionario: payload.petitioner.Nombre,
-      email: payload.petitioner.Email,
-      movil: payload.petitioner.Movil,
-      tipoElementoID: payload.tipoElementoID,
-      desTipoElemento: payload.desTipoElemento,
-      tipoIncID: payload.tipoIncID,
-      tipoInc: payload.tipoInc,
-      desAveria: payload.description,
-      x: payload.lat,
-      y: payload.lng,
-      calleID: payload.calleID,
-      numCalle: payload.numCalle,
-      desUbicacion: payload.desUbicacion,
-      fotos,
-    });
+    let resultado: Record<string, unknown>;
+    try {
+      resultado = await client.nuevaIncidencia({
+        ayuntamientoID: preview.ayuntamientoID,
+        ciudadanoID: payload.petitioner.CiudadanoID,
+        nombrePeticionario: payload.petitioner.Nombre,
+        email: payload.petitioner.Email,
+        movil: payload.petitioner.Movil,
+        tipoElementoID: payload.tipoElementoID,
+        desTipoElemento: payload.desTipoElemento,
+        tipoIncID: payload.tipoIncID,
+        tipoInc: payload.tipoInc,
+        desAveria: payload.description,
+        x: payload.lat,
+        y: payload.lng,
+        calleID: payload.calleID,
+        numCalle: payload.numCalle,
+        desUbicacion: payload.desUbicacion,
+        fotos,
+      });
+    } catch (err: any) {
+      const timedOut = err instanceof GecorApiError && err.kind === "timeout";
+      throw new Error([
+        `Envío NO confirmado: ${err?.message || String(err)}`,
+        fotos.length ? "La foto se subió a GECOR, pero GECOR no confirmó la creación del aviso." : "GECOR no confirmó la creación del aviso.",
+        timedOut ? "Al no haber respuesta, el resultado es ambiguo: el aviso podría haberse creado igualmente." : "",
+        "No reintentes a ciegas: consulta primero list_my_avisos y, solo si el aviso no aparece, crea una nueva previsualización y solicita confirmación otra vez.",
+      ].filter(Boolean).join(" "));
+    }
 
     return {
       content: [

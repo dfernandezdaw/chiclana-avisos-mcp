@@ -6,6 +6,7 @@ import {
   DEFAULT_AYTO_ID,
   DEFAULT_LANGUAGE,
   GECOR_TOKEN,
+  getGecorTimeoutMs,
 } from "./config.js";
 import type {
   GecorAyuntamiento,
@@ -24,15 +25,68 @@ export interface GecorClientOptions {
   baseUrl?: string;
 }
 
+export type GecorErrorKind = "http" | "timeout" | "network";
+
+export interface GecorApiErrorOptions {
+  kind?: GecorErrorKind;
+  timeoutMs?: number;
+  // Valores que nunca deben aparecer en el texto del error (token, campos de la petición).
+  secrets?: string[];
+}
+
+const MAX_ERROR_SNIPPET = 300;
+const MIN_REDACTED_LENGTH = 8;
+const JWT_PATTERN = /eyJ[\w-]+\.[\w-]+\.[\w-]*/g;
+
+function collectStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const item of value) collectStrings(item, out);
+  else if (value && typeof value === "object") for (const item of Object.values(value)) collectStrings(item, out);
+  return out;
+}
+
+function sanitizeErrorSnippet(body: unknown, secrets: string[]): string {
+  let text = typeof body === "string" ? body : body === undefined ? "" : JSON.stringify(body) ?? "";
+  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
+    if (secret) text = text.split(secret).join("[redactado]");
+  }
+  text = text.replace(JWT_PATTERN, "[redactado]").replace(/(?:\\[nrt]|\s)+/g, " ").trim();
+  return text.length > MAX_ERROR_SNIPPET ? `${text.slice(0, MAX_ERROR_SNIPPET - 1)}…` : text;
+}
+
+function formatGecorErrorMessage(status: number, endpoint: string, kind: GecorErrorKind, snippet: string, timeoutMs = 0): string {
+  if (kind === "timeout") return `GECOR no respondió en ${timeoutMs / 1000} s (${endpoint}).`;
+  if (kind === "network") return `No se pudo conectar con GECOR (${endpoint}).`;
+  return `GECOR API error (${status}) en ${endpoint}${snippet ? `: ${snippet}` : ""}`;
+}
+
 export class GecorApiError extends Error {
+  public kind: GecorErrorKind;
+  // Fragmento saneado de la respuesta; nunca contiene la petición ni el token.
+  public body: string;
+
   constructor(
     public status: number,
     public endpoint: string,
-    public body: unknown,
+    body: unknown,
+    opts: GecorApiErrorOptions = {},
   ) {
-    super(`GECOR API error (${status}) en ${endpoint}: ${typeof body === "string" ? body : JSON.stringify(body)}`);
+    const kind = opts.kind ?? "http";
+    const snippet = sanitizeErrorSnippet(body, opts.secrets ?? []);
+    super(formatGecorErrorMessage(status, endpoint, kind, snippet, opts.timeoutMs));
     this.name = "GecorApiError";
+    this.kind = kind;
+    this.body = snippet;
   }
+}
+
+// Solo las consultas (get*) son idempotentes; las escrituras nunca se reintentan.
+function isRetryableEndpoint(endpoint: string): boolean {
+  return /^get/i.test(endpoint.split("/").at(-1) ?? "");
+}
+
+function isTransientError(err: unknown): boolean {
+  return err instanceof GecorApiError && (err.kind !== "http" || err.status >= 500);
 }
 
 export interface PetitionerIdentity {
@@ -100,29 +154,49 @@ export class GecorClient {
   }
 
   private async post<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-    const url = `${this.baseUrl.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const text = await res.text();
-    let data: unknown;
     try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
+      return await this.request<T>(endpoint, body);
+    } catch (err) {
+      if (!isRetryableEndpoint(endpoint) || !isTransientError(err)) throw err;
+      return this.request<T>(endpoint, body);
+    }
+  }
+
+  private async request<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
+    const url = `${this.baseUrl.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`;
+    const timeoutMs = getGecorTimeoutMs();
+    const secrets = [
+      this.token,
+      typeof body.token === "string" ? body.token : "",
+      ...collectStrings(body).filter((value) => value.length >= MIN_REDACTED_LENGTH),
+    ].filter(Boolean);
+    let res: Response;
+    let text: string;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      text = await res.text();
+    } catch (err: any) {
+      if (err?.name === "TimeoutError") throw new GecorApiError(0, endpoint, undefined, { kind: "timeout", timeoutMs });
+      throw new GecorApiError(0, endpoint, undefined, { kind: "network" });
     }
 
     if (!res.ok) {
-      throw new GecorApiError(res.status, endpoint, data);
+      throw new GecorApiError(res.status, endpoint, text, { secrets });
     }
 
-    return data as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as T;
+    }
   }
 
   /**
