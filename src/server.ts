@@ -10,7 +10,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { GecorApiError, GecorClient } from "./client.js";
-import { parsePhoto } from "./photo.js";
+import { parsePhoto, type PhotoInfo } from "./photo.js";
 import { DEFAULT_AYTO_ID, DEFAULT_AYTO_NAME } from "./config.js";
 
 interface PendingAvisoPreview {
@@ -44,6 +44,27 @@ export function assertSubmissionEnabled(env: NodeJS.ProcessEnv = process.env): v
 type ToolArgs = Record<string, unknown> | undefined;
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 type ToolHandler = (args: ToolArgs) => Promise<ToolResult>;
+
+function parseCoordinate(value: unknown, min: number, max: number, label: "Latitud" | "Longitud"): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${label} inválida: debe ser un número entre ${min} y ${max}.`);
+  return n;
+}
+
+/** Mensaje accionable cuando no hay coordenadas explícitas ni GPS EXIF utilizable. */
+export function missingLocationMessage(photo: Pick<PhotoInfo, "mime" | "warning">): string {
+  const cause = photo.mime !== "image/jpeg"
+    ? "La foto es PNG (sin EXIF): este formato no incluye ubicación GPS."
+    : photo.warning
+      ? `La foto JPEG no aporta una ubicación utilizable: ${photo.warning}`
+      : "La foto JPEG no contiene etiquetas GPS (es habitual si se envió por Telegram o WhatsApp, que eliminan el EXIF, o si la ubicación estaba desactivada en la cámara).";
+  return [
+    "No se encontró ninguna ubicación para el aviso.",
+    cause,
+    "Pide a la persona que comparta un pin de ubicación (lat/lng) o unas coordenadas explícitas, o que reenvíe la foto como archivo/documento para conservar el EXIF.",
+    "No inventes coordenadas. Un nombre de calle por sí solo (resolve_location) no aporta coordenadas.",
+  ].join(" ");
+}
 
 export function createMcpServer(client: GecorClient = new GecorClient()): Server {
   const pendingPreviews = new Map<string, PendingAvisoPreview>();
@@ -379,8 +400,6 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
   };
 
   async function previewAviso(args: ToolArgs): Promise<ToolResult> {
-    let lat = args?.lat !== undefined ? Number(args.lat) : undefined;
-    let lng = args?.lng !== undefined ? Number(args.lng) : undefined;
     const imagePath = typeof args?.image_path === "string" && args.image_path.trim() ? args.image_path : undefined;
     const imageBase64 = typeof args?.image_base64 === "string" && args.image_base64.trim() ? args.image_base64 : undefined;
     if (!imagePath && !imageBase64) throw new Error("Se requiere una foto mediante image_path o image_base64 para previsualizar.");
@@ -398,9 +417,20 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     if (!Number.isInteger(tipoElementoID) || tipoElementoID <= 0) throw new Error("tipoElementoID debe ser un entero positivo.");
     if (!Number.isInteger(tipoIncID) || tipoIncID <= 0) throw new Error("tipoIncID debe ser un entero positivo.");
     if (imagePath && imageBase64) throw new Error("Proporciona solo image_path o image_base64, no ambos.");
+
+    const hasLat = args?.lat !== undefined;
+    const hasLng = args?.lng !== undefined;
+    if (hasLat !== hasLng) {
+      throw new Error(`Coordenadas incompletas: falta la ${hasLat ? "longitud" : "latitud"}. Indica ambas (lat y lng) u omite las dos para usar el GPS EXIF de la foto.`);
+    }
+    let lat = hasLat ? parseCoordinate(args?.lat, -90, 90, "Latitud") : undefined;
+    let lng = hasLng ? parseCoordinate(args?.lng, -180, 180, "Longitud") : undefined;
+
+    let photoInfo: PhotoInfo | undefined;
     if (imagePath || imageBase64) {
       try {
         const photo = await parsePhoto(imageBase64, imagePath);
+        photoInfo = photo;
         photoDataUri = photo.dataUri;
         photoSummary = {
           mime: photo.mime,
@@ -412,7 +442,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           exif_conservado: photo.exifPreserved,
           ...(photo.reductionWarning ? { aviso_reduccion: photo.reductionWarning } : {}),
         };
-        if (photo.gps && (args?.lat === undefined || args?.lng === undefined)) {
+        if (photo.gps && lat === undefined) {
           lat = photo.gps.lat;
           lng = photo.gps.lng;
         }
@@ -423,8 +453,9 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
       }
     }
 
-    if (!Number.isFinite(lat) || lat === undefined || lat < -90 || lat > 90) throw new Error("Latitud inválida; se requieren coordenadas válidas.");
-    if (!Number.isFinite(lng) || lng === undefined || lng < -180 || lng > 180) throw new Error("Longitud inválida; se requieren coordenadas válidas.");
+    if (lat === undefined || lng === undefined) {
+      throw new Error(photoInfo ? missingLocationMessage(photoInfo) : "No se encontró ninguna ubicación para el aviso.");
+    }
 
     const payload: PendingAvisoPreview["payload"] = {
       description: String(args?.description).trim(),
