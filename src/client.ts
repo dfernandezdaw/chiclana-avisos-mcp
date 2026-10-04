@@ -45,10 +45,26 @@ function collectStrings(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
+// Formas en que un valor puede aparecer en una respuesta JSON: literal, escapado por JSON.stringify,
+// con "/" como "\/" y con los caracteres no ASCII como \uXXXX (hex en minúsculas o mayúsculas).
+function secretVariants(secret: string): string[] {
+  const escaped = JSON.stringify(secret).slice(1, -1);
+  const toUnicode = (s: string, upper: boolean) => s.replace(/[\u007f-\uffff]/g, (c) => {
+    const hex = c.charCodeAt(0).toString(16).padStart(4, "0");
+    return `\\u${upper ? hex.toUpperCase() : hex}`;
+  });
+  const forms = [secret];
+  for (const base of [escaped, toUnicode(escaped, false), toUnicode(escaped, true)]) {
+    forms.push(base, base.replace(/\//g, "\\/"));
+  }
+  return [...new Set(forms)];
+}
+
 function sanitizeErrorSnippet(body: unknown, secrets: string[]): string {
   let text = typeof body === "string" ? body : body === undefined ? "" : JSON.stringify(body) ?? "";
-  for (const secret of [...secrets].sort((a, b) => b.length - a.length)) {
-    if (secret) text = text.split(secret).join("[redactado]");
+  const variants = secrets.filter(Boolean).flatMap(secretVariants);
+  for (const secret of [...new Set(variants)].sort((a, b) => b.length - a.length)) {
+    text = text.split(secret).join("[redactado]");
   }
   text = text.replace(JWT_PATTERN, "[redactado]").replace(/(?:\\[nrt]|\s)+/g, " ").trim();
   return text.length > MAX_ERROR_SNIPPET ? `${text.slice(0, MAX_ERROR_SNIPPET - 1)}…` : text;

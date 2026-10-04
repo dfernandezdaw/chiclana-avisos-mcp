@@ -222,3 +222,64 @@ test("photo upload failure reports that nothing was created", async () => {
   assert.equal(replay.isError, true);
   assert.deepEqual(calls, { upload: 1, submit: 0 });
 });
+
+test("GECOR_TIMEOUT_MS above the 120 s maximum is clamped to the maximum", async () => {
+  const { getGecorTimeoutMs } = await import("../dist/config.js");
+  for (const [value, expected] of [["120000", 120000], ["120001", 120000], ["99999999", 120000], ["119999", 119999]]) {
+    const restoreEnv = withTimeoutEnv(value);
+    try { assert.equal(getGecorTimeoutMs(), expected, `GECOR_TIMEOUT_MS=${value}`); } finally { restoreEnv(); }
+  }
+});
+
+test("GECOR error text redacts JSON-escaped forms of sensitive request values", async () => {
+  const entity = { AyuntamientoID: 268, ProcedenciaWeb: 42, TokenAyuntamiento: "fixture" };
+  const desAveria = 'Farola "rota" en C\\ Ancha/Mayor junto al kiosco de José Ángel';
+  const asciiEscaped = (s) => s.replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const jsonInner = JSON.stringify(desAveria).slice(1, -1);
+  const forms = [
+    jsonInner,
+    jsonInner.replace(/\//g, "\\/"),
+    asciiEscaped(jsonInner),
+    asciiEscaped(jsonInner).replace(/\//g, "\\/"),
+    asciiEscaped(jsonInner).replace(/\\u([0-9a-f]{4})/g, (_, h) => `\\u${h.toUpperCase()}`),
+  ];
+  for (const form of forms) {
+    const fake = stubFetch((url) => url.endsWith("getAyuntamientoByAytoID")
+      ? { body: entity }
+      : { status: 400, body: `{"Message":"Invalid desAveria: ${form}"}` });
+    try {
+      await assert.rejects(testClient().nuevaIncidencia({ tipoElementoID: 1, tipoIncID: 2, desAveria, x: 1, y: 2 }), (err) => {
+        assert.ok(err instanceof GecorApiError);
+        assert.match(err.message, /Invalid desAveria: \[redactado\]/, `form leaked: ${form}`);
+        for (const text of [err.message, String(err.body)]) {
+          assert.equal(text.includes("kiosco"), false, `form leaked: ${form}`);
+        }
+        return true;
+      });
+    } finally { fake.restore(); }
+  }
+});
+
+test("incident creation network failure is reported as an ambiguous outcome", async () => {
+  const { result } = await submitWith({
+    upload: async () => "fixture-photo",
+    submit: async () => { throw new GecorApiError(0, "Incident/nuevaIncidencia", undefined, { kind: "network" }); },
+  });
+  assert.equal(result.isError, true);
+  const text = result.content[0].text;
+  assert.match(text, /No se pudo conectar con GECOR/);
+  assert.match(text, /ambiguo/i);
+  assert.match(text, /podría haberse creado/i);
+  assert.match(text, /list_my_avisos/);
+});
+
+test("incident creation HTTP error with a definite status is not reported as ambiguous", async () => {
+  const { result } = await submitWith({
+    upload: async () => "fixture-photo",
+    submit: async () => { throw new GecorApiError(400, "Incident/nuevaIncidencia", "bad request"); },
+  });
+  assert.equal(result.isError, true);
+  const text = result.content[0].text;
+  assert.doesNotMatch(text, /ambiguo/i);
+  assert.match(text, /list_my_avisos/);
+});

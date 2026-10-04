@@ -510,11 +510,12 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         fotos,
       });
     } catch (err: any) {
-      const timedOut = err instanceof GecorApiError && err.kind === "timeout";
+      // Solo un error HTTP con estado definido descarta que el aviso se haya creado.
+      const ambiguous = !(err instanceof GecorApiError && err.kind === "http");
       throw new Error([
         `Envío NO confirmado: ${err?.message || String(err)}`,
         fotos.length ? "La foto se subió a GECOR, pero GECOR no confirmó la creación del aviso." : "GECOR no confirmó la creación del aviso.",
-        timedOut ? "Al no haber respuesta, el resultado es ambiguo: el aviso podría haberse creado igualmente." : "",
+        ambiguous ? "Al no haber respuesta definitiva, el resultado es ambiguo: el aviso podría haberse creado igualmente." : "",
         "No reintentes a ciegas: consulta primero list_my_avisos y, solo si el aviso no aparece, crea una nueva previsualización y solicita confirmación otra vez.",
       ].filter(Boolean).join(" "));
     }

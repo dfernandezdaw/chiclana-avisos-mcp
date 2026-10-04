@@ -23,10 +23,13 @@ export const DEFAULT_LANGUAGE = process.env.GECOR_LANGUAGE || "es";
 
 // Tiempo máximo por petición a GECOR; se lee por llamada como el resto de ajustes dinámicos.
 export const DEFAULT_GECOR_TIMEOUT_MS = 20_000;
+// Valores superiores se recortan a este máximo.
+export const MAX_GECOR_TIMEOUT_MS = 120_000;
 
 export function getGecorTimeoutMs(): number {
   const parsed = Number(process.env.GECOR_TIMEOUT_MS || DEFAULT_GECOR_TIMEOUT_MS);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : DEFAULT_GECOR_TIMEOUT_MS;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return DEFAULT_GECOR_TIMEOUT_MS;
+  return Math.min(parsed, MAX_GECOR_TIMEOUT_MS);
 }
 
 // Fotos: se leen por llamada para que los cambios de entorno surtan efecto sin reiniciar.
