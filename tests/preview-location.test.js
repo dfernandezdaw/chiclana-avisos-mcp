@@ -43,6 +43,7 @@ function buildGpsApp1(latDegrees) {
 
 const JPEG_NO_GPS = synthJpeg(16, 16);
 const JPEG_BAD_GPS = Buffer.concat([JPEG_NO_GPS.subarray(0, 2), buildGpsApp1(95), JPEG_NO_GPS.subarray(2)]);
+const JPEG_GPS = Buffer.concat([JPEG_NO_GPS.subarray(0, 2), buildGpsApp1(36), JPEG_NO_GPS.subarray(2)]);
 
 class TestTransport {
   onmessage;
@@ -152,6 +153,27 @@ test("only one of lat/lng gives a clear message", async () => {
     const onlyLng = await preview({ image_base64: JPEG_NO_GPS.toString("base64"), lng: -6.15 });
     assert.equal(onlyLng.isError, true);
     assert.match(onlyLng.content[0].text, /falta la latitud/i);
+    assertNoSideEffects(calls);
+  });
+});
+
+test("JPEG with valid EXIF GPS and no lat/lng previews at the photo location", async () => {
+  await withServer(async ({ preview, calls }) => {
+    const result = await preview({ image_base64: JPEG_GPS.toString("base64") });
+    assert.equal(result.isError, undefined, result.content[0].text);
+    const body = JSON.parse(result.content[0].text);
+    assert.equal(body.phase, "preview");
+    assert.deepEqual([body.ubicacion.lat, body.ubicacion.lng], [36, -6]);
+    assertNoSideEffects(calls);
+  });
+});
+
+test("explicit lat/lng take precedence over EXIF GPS", async () => {
+  await withServer(async ({ preview, calls }) => {
+    const result = await preview({ image_base64: JPEG_GPS.toString("base64"), lat: 36.42, lng: -6.15 });
+    assert.equal(result.isError, undefined, result.content[0].text);
+    const body = JSON.parse(result.content[0].text);
+    assert.deepEqual([body.ubicacion.lat, body.ubicacion.lng], [36.42, -6.15]);
     assertNoSideEffects(calls);
   });
 });

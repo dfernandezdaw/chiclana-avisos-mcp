@@ -456,6 +456,10 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     if (lat === undefined || lng === undefined) {
       throw new Error(photoInfo ? missingLocationMessage(photoInfo) : "No se encontró ninguna ubicación para el aviso.");
     }
+    // Defensa en profundidad: la ubicación final (explícita o EXIF) debe estar en rango.
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      throw new Error("Ubicación fuera de rango; pide una ubicación válida.");
+    }
 
     const payload: PendingAvisoPreview["payload"] = {
       description: String(args?.description).trim(),
