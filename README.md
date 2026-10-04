@@ -68,9 +68,9 @@ Consulta la documentación de tu cliente para el formato exacto del fichero de c
 
 Si eres un agente configurando este servidor para un usuario:
 
-1. Pide al usuario su token de GECOR (sección anterior) y su municipio; no lo busques ni lo extraigas por tu cuenta.
-2. Configura la entrada MCP con `npx -y chiclana-avisos-mcp`, el token en `env` de esa entrada y `GECOR_ALLOW_SUBMISSION` en `false`.
-3. Reinicia el cliente y llama a `whoami` para comprobar el municipio activo y que el token está configurado.
+1. Pide al usuario su token de GECOR (ver [1. Obtener el token de GECOR](#1-obtener-el-token-de-gecor)); no lo busques ni lo extraigas por tu cuenta.
+2. Configura la entrada MCP con `npx -y chiclana-avisos-mcp`, el token en `env` de esa entrada y `GECOR_ALLOW_SUBMISSION` en `false`. Chiclana es `GECOR_AYTO_ID=268`; para otro municipio, obtén su ID con `list_ayuntamientos`.
+3. Reinicia el cliente y llama a `whoami`: confirma el municipio activo y que hay token configurado, pero no valida el token. Para comprobar que GECOR lo acepta, llama a `list_my_avisos` (solo lectura).
 4. Mantén el envío deshabilitado hasta que el usuario confirme expresamente que quiere enviar avisos reales; solo entonces cambia `GECOR_ALLOW_SUBMISSION` a `true`.
 5. Sigue el flujo de [`skill/SKILL.md`](skill/SKILL.md): previsualizar, mostrar el resumen y enviar solo tras confirmación explícita.
 
