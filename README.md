@@ -12,7 +12,9 @@ Permite que un agente de IA pueda:
 
 ---
 
-## 🚀 Inicio Rápido
+## 📦 Instalación
+
+Requiere Node.js 20 o superior. El paquete se publica en npm como `chiclana-avisos-mcp` y se ejecuta con `npx`, sin clonar el repositorio.
 
 ### 1. Obtener el token de GECOR
 
@@ -20,9 +22,68 @@ Autentica con GECOR y obtén el token de la sesión (por ejemplo, desde `localSt
 
 ### 2. Configurar en tu cliente MCP
 
-#### Claude Desktop / Claude Code
+#### Claude Desktop
 
-Añade a tu fichero de configuración de MCP (`claude_desktop_config.json` o settings de Claude Code):
+Añade a `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "chiclana-avisos": {
+      "command": "npx",
+      "args": ["-y", "chiclana-avisos-mcp"],
+      "env": {
+        "GECOR_TOKEN": "<tu-token-gecor>",
+        "GECOR_AYTO_ID": "268",
+        "GECOR_ALLOW_SUBMISSION": "false"
+      }
+    }
+  }
+}
+```
+
+#### Claude Code
+
+```bash
+claude mcp add chiclana-avisos \
+  -e GECOR_TOKEN=<tu-token-gecor> \
+  -e GECOR_AYTO_ID=268 \
+  -e GECOR_ALLOW_SUBMISSION=false \
+  -- npx -y chiclana-avisos-mcp
+```
+
+#### Otros clientes MCP (OpenCode, Hermes, etc.)
+
+Cualquier cliente que lance servidores MCP por stdio necesita los mismos tres elementos: comando, argumentos y entorno.
+
+- **command**: `npx`
+- **args**: `["-y", "chiclana-avisos-mcp"]`
+- **env**: `GECOR_TOKEN`, `GECOR_AYTO_ID` (por defecto `268`) y `GECOR_ALLOW_SUBMISSION` (`false` hasta que quieras enviar avisos reales)
+
+Consulta la documentación de tu cliente para el formato exacto del fichero de configuración.
+
+`GECOR_ALLOW_SUBMISSION` en `false` permite previsualizar avisos sin enviarlos. Cámbialo a `true` solo cuando quieras registrar avisos reales.
+
+### Para agentes de IA
+
+Si eres un agente configurando este servidor para un usuario:
+
+1. Pide al usuario su token de GECOR (sección anterior) y su municipio; no lo busques ni lo extraigas por tu cuenta.
+2. Configura la entrada MCP con `npx -y chiclana-avisos-mcp`, el token en `env` de esa entrada y `GECOR_ALLOW_SUBMISSION` en `false`.
+3. Reinicia el cliente y llama a `whoami` para comprobar el municipio activo y que el token está configurado.
+4. Mantén el envío deshabilitado hasta que el usuario confirme expresamente que quiere enviar avisos reales; solo entonces cambia `GECOR_ALLOW_SUBMISSION` a `true`.
+5. Sigue el flujo de [`skill/SKILL.md`](skill/SKILL.md): previsualizar, mostrar el resumen y enviar solo tras confirmación explícita.
+
+### Desde el código
+
+```bash
+git clone https://github.com/dfernandezdaw/chiclana-avisos-mcp.git
+cd chiclana-avisos-mcp
+npm install
+npm run build
+```
+
+Y apunta tu cliente MCP a `dist/index.js` (por ejemplo, en `claude_desktop_config.json`):
 
 ```json
 {
@@ -145,4 +206,14 @@ node dist/cli.js calles [filtro]          # Consultar callejero oficial
 ```bash
 npm install
 npm run build
+npm run typecheck
+npm test
 ```
+
+---
+
+## 📄 Licencia
+
+MIT. Consulta [`LICENSE`](LICENSE).
+
+Inspirado en [madrid-avisos-mcp](https://github.com/Naroh091/madrid-avisos-mcp).

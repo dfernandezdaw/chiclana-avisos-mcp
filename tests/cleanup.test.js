@@ -70,7 +70,7 @@ test("MCP initialize reports the package.json version", async () => {
   await withServer({ ayuntamientoID: 268 }, async (client) => {
     assert.equal(client.getServerVersion()?.version, PACKAGE_VERSION);
   });
-  // package.json is still 1.0.0, so also guard against a hardcoded version literal in the build.
+  // package.json may match the stale literal, so also guard against a hardcoded version literal in the build.
   const serverSource = readFileSync(new URL("../dist/server.js", import.meta.url), "utf8");
   assert.doesNotMatch(serverSource, /version:\s*"\d+\.\d+\.\d+"/);
 });

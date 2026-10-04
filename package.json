@@ -1,6 +1,6 @@
 {
   "name": "chiclana-avisos-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Servidor MCP para la gestión de incidencias ciudadanas en Chiclana de la Frontera y municipios GECOR",
   "type": "module",
   "main": "dist/index.js",
@@ -8,13 +8,20 @@
     "chiclana-avisos-mcp": "dist/index.js",
     "chiclana-avisos-cli": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p .",
     "test": "npm run build && node --test tests/*.test.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "cli": "node dist/cli.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "mcp",
@@ -26,10 +33,21 @@
     "cadiz",
     "smartcity"
   ],
-  "author": "",
+  "author": "David",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dfernandezdaw/chiclana-avisos-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dfernandezdaw/chiclana-avisos-mcp/issues"
+  },
+  "homepage": "https://github.com/dfernandezdaw/chiclana-avisos-mcp#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.1",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "exif-parser": "^0.1.12",
     "jpeg-js": "^0.4.4"
   },
