@@ -1,8 +1,12 @@
 /**
  * Utilidades para análisis de fotos y extracción de coordenadas GPS EXIF
  */
-import { readFile } from "node:fs/promises";
+import { open, realpath } from "node:fs/promises";
+import path from "node:path";
 import exifParser from "exif-parser";
+import { getMaxPhotoBytes, getPhotoDirs } from "./config.js";
+
+export type PhotoMime = "image/jpeg" | "image/png";
 
 export interface PhotoGps {
   lat: number;
@@ -18,9 +22,79 @@ export interface PhotoInfo {
   takenAt?: string;
   gps: PhotoGps | null;
   bytes: number;
+  mime: PhotoMime;
   base64: string;
   dataUri: string;
   warning?: string;
+}
+
+const UNSUPPORTED_FORMAT = "Formato no soportado: usa JPEG o PNG.";
+const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+function tooLarge(maxBytes: number): Error {
+  return new Error(`La foto es demasiado grande (máximo ${maxBytes} bytes, ajustable con GECOR_MAX_PHOTO_BYTES).`);
+}
+
+/** Detecta el tipo por la firma de bytes; solo se aceptan JPEG y PNG */
+export function detectPhotoMime(buf: Buffer): PhotoMime | null {
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((b, i) => buf[i] === b)) return "image/png";
+  return null;
+}
+
+function decodeBase64(imageBase64: string, maxBytes: number): Buffer {
+  // Cota previa barata: evita procesar cadenas enormes antes de limpiar espacios.
+  if (imageBase64.length > Math.ceil(maxBytes / 3) * 4 * 2 + 1024) throw tooLarge(maxBytes);
+  const prefix = /^\s*data:image\/[\w+.-]+;base64,/.exec(imageBase64);
+  const body = (prefix ? imageBase64.slice(prefix[0].length) : imageBase64).replace(/\s+/g, "");
+  if (!body || !BASE64_BODY.test(body) || body.length % 4 === 1) {
+    throw new Error("image_base64 está vacío o no es base64 válido.");
+  }
+  const padding = body.endsWith("==") ? 2 : body.endsWith("=") ? 1 : 0;
+  if (Math.floor((body.length * 3) / 4) - padding > maxBytes) throw tooLarge(maxBytes);
+  return Buffer.from(body, "base64");
+}
+
+function isInside(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+async function allowedPhotoRoots(): Promise<string[]> {
+  const roots: string[] = [];
+  for (const dir of getPhotoDirs()) {
+    try {
+      roots.push(await realpath(dir));
+    } catch {
+      // Los directorios inexistentes no se permiten.
+    }
+  }
+  return roots;
+}
+
+async function readConfinedFile(imagePath: string, maxBytes: number): Promise<Buffer> {
+  let real: string;
+  try {
+    real = await realpath(imagePath);
+  } catch {
+    throw new Error("No se encontró la foto en image_path.");
+  }
+  const roots = await allowedPhotoRoots();
+  if (!roots.some((root) => isInside(root, real))) {
+    throw new Error("image_path está fuera de los directorios permitidos para fotos. Configura GECOR_PHOTO_DIRS o usa image_base64.");
+  }
+  const handle = await open(real, "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error("image_path debe apuntar a un fichero regular.");
+    if (stat.size > maxBytes) throw tooLarge(maxBytes);
+    const buf = await handle.readFile();
+    if (buf.length > maxBytes) throw tooLarge(maxBytes);
+    return buf;
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Carga el buffer de la foto desde base64 o fichero local */
@@ -28,20 +102,10 @@ export async function loadPhotoBuffer(imageBase64?: string, imagePath?: string):
   if (imageBase64 && imagePath) {
     throw new Error("Pasa solo una opción: image_base64 o image_path.");
   }
-  if (imageBase64) {
-    const clean = imageBase64.replace(/^data:image\/[\w+.-]+;base64,/, "").trim();
-    const buf = Buffer.from(clean, "base64");
-    if (!buf.length) throw new Error("image_base64 está vacío o no es válido.");
-    return buf;
-  }
-  if (imagePath) {
-    return readFile(imagePath);
-  }
+  const maxBytes = getMaxPhotoBytes();
+  if (imageBase64) return decodeBase64(imageBase64, maxBytes);
+  if (imagePath) return readConfinedFile(imagePath, maxBytes);
   throw new Error("Falta la imagen: proporciona image_base64 o image_path.");
-}
-
-function isJpeg(buf: Buffer): boolean {
-  return buf.length > 2 && buf[0] === 0xff && buf[1] === 0xd8;
 }
 
 function toDecimal(val: unknown, ref: unknown, negativeRef: string): number | null {
@@ -65,15 +129,18 @@ function inRange(n: number | null, min: number, max: number): n is number {
  */
 export async function parsePhoto(imageBase64?: string, imagePath?: string): Promise<PhotoInfo> {
   const buf = await loadPhotoBuffer(imageBase64, imagePath);
+  const mime = detectPhotoMime(buf);
+  if (!mime) throw new Error(UNSUPPORTED_FORMAT);
   const base64 = buf.toString("base64");
   const info: PhotoInfo = {
     gps: null,
     bytes: buf.length,
+    mime,
     base64,
-    dataUri: `data:image/${isJpeg(buf) ? "jpeg" : "png"};base64,${base64}`,
+    dataUri: `data:${mime};base64,${base64}`,
   };
 
-  if (!isJpeg(buf)) {
+  if (mime !== "image/jpeg") {
     info.warning = "La imagen no es JPEG: no se pueden leer etiquetas EXIF automáticamente. Pasa las coordenadas lat/lng manualmente.";
     return info;
   }

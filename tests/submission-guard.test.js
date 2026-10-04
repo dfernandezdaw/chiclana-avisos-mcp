@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createMcpServer } from "../dist/server.js";
 
+const FIXTURE_IMAGE = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("fixture image")]);
+
 class TestTransport {
   onmessage;
   onerror;
@@ -55,7 +57,7 @@ test("photo-to-notice facade previews without writes and confirms only its bound
       assert.deepEqual(calls, { upload: [], submit: [] });
     }
     assert.deepEqual(calls, { upload: [], submit: [] });
-    const image = Buffer.from("fixture image").toString("base64");
+    const image = FIXTURE_IMAGE.toString("base64");
     const previewResult = await client.callTool({ name: "create_aviso_from_photo", arguments: {
       description: "bound description", tipoElementoID: 1, tipoIncID: 2,
       lat: 36, lng: -6, image_base64: image,
@@ -134,13 +136,13 @@ test("blocked MCP submission preserves the exact photo-backed preview for later 
       name: "create_aviso_from_photo",
       arguments: {
         description: "fixture description", tipoElementoID: 1, tipoIncID: 2,
-        lat: 36, lng: -6, image_base64: Buffer.from("fixture image").toString("base64"),
+        lat: 36, lng: -6, image_base64: FIXTURE_IMAGE.toString("base64"),
       },
     });
     const preview = JSON.parse(previewResult.content[0].text);
     assert.equal(preview.phase, "preview");
     assert.equal(Object.hasOwn(preview, "peticionario"), false);
-    const expectedPhotoDataUri = `data:image/png;base64,${Buffer.from("fixture image").toString("base64")}`;
+    const expectedPhotoDataUri = `data:image/png;base64,${FIXTURE_IMAGE.toString("base64")}`;
     const args = { preview_token: preview.preview_token, confirm: true, human_confirmed: true };
 
     for (const disabledValue of [undefined, "false"]) {

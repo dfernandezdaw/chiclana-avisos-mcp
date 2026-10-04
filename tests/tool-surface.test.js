@@ -28,8 +28,11 @@ function responseText(result) {
   return result.content.map((item) => item.text ?? "").join("\n");
 }
 
+// Preview tokens are random UUIDs and may contain digit markers such as "4242"; mask them so marker checks are deterministic.
+const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
 function assertNoPetitioner(result, label) {
-  const text = responseText(result);
+  const text = responseText(result).replace(UUID_PATTERN, "<uuid>");
   for (const marker of PETITIONER_MARKERS) {
     assert.equal(text.includes(marker), false, `${label} must not expose ${marker}`);
   }
@@ -66,9 +69,10 @@ async function withServer(run) {
   }
 }
 
+const FIXTURE_IMAGE = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("fixture image")]);
 const previewArgs = {
   description: "farola rota", tipoElementoID: 1, tipoIncID: 2,
-  lat: 36, lng: -6, image_base64: Buffer.from("fixture image").toString("base64"),
+  lat: 36, lng: -6, image_base64: FIXTURE_IMAGE.toString("base64"),
 };
 
 test("unlisted tool names are rejected without performing any action", async () => {
