@@ -29,9 +29,10 @@ function stubFetch(responder) {
         if (!signal) return void setTimeout(() => reject(new Error("request sent without abort signal")), 500);
         if (signal.aborted) return void reject(signal.reason);
         // AbortSignal.timeout's timer is unref'd; a real fetch keeps its socket ref'd, so emulate that
-        // or Node 20/22 exits the test file before the abort fires.
-        const keepAlive = setInterval(() => {}, 1000);
-        signal.addEventListener("abort", () => { clearInterval(keepAlive); reject(signal.reason); }, { once: true });
+        // or Node 20/22 exits the test file before the abort fires. Bounded so a signal that never
+        // aborts fails the test instead of hanging it.
+        const keepAlive = setTimeout(() => reject(new Error("abort signal never fired")), 5000);
+        signal.addEventListener("abort", () => { clearTimeout(keepAlive); reject(signal.reason); }, { once: true });
       });
     }
     const text = typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body);
