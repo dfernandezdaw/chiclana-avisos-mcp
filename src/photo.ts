@@ -16,6 +16,14 @@ export interface PhotoGps {
   alt?: number;
 }
 
+/** Miniatura para que el modelo vea la foto; nunca se sube ni lleva EXIF (salvo PNG tal cual) */
+export interface PhotoThumbnail {
+  mime: PhotoMime;
+  base64: string;
+  width: number;
+  height: number;
+}
+
 export interface PhotoInfo {
   width?: number;
   height?: number;
@@ -34,7 +42,13 @@ export interface PhotoInfo {
   dataUri: string;
   warning?: string;
   reductionWarning?: string;
+  thumbnail?: PhotoThumbnail;
+  /** Motivo por el que no hay miniatura. */
+  thumbnailWarning?: string;
 }
+
+/** Los PNG no se decodifican: se devuelven tal cual como miniatura si no superan este tamaño. */
+export const MAX_PNG_THUMBNAIL_BYTES = 1024 * 1024;
 
 const UNSUPPORTED_FORMAT = "Formato no soportado: usa JPEG o PNG.";
 const BASE64_BODY = /^[A-Za-z0-9+/]*={0,2}$/;
@@ -137,6 +151,16 @@ function inRange(n: number | null, min: number, max: number): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= min && n <= max;
 }
 
+/** Orientation EXIF (1-8); 1 si no hay EXIF legible */
+function readOrientation(buf: Buffer): number {
+  try {
+    const orientation = exifParser.create(buf).parse().tags.Orientation;
+    return typeof orientation === "number" ? orientation : 1;
+  } catch {
+    return 1;
+  }
+}
+
 /**
  * Extrae metadatos y coordenadas GPS EXIF de una imagen
  */
@@ -146,7 +170,7 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
   if (!mime) throw new Error(UNSUPPORTED_FORMAT);
   // Solo se reducen JPEG; el EXIF se lee siempre del buffer original.
   const upload = mime === "image/jpeg"
-    ? reduceJpeg(buf)
+    ? reduceJpeg(buf, readOrientation(buf))
     : { buffer: buf, reduced: false, exifPreserved: false, ...readPngSize(buf) };
   const base64 = upload.buffer.toString("base64");
   const info: PhotoInfo = {
@@ -163,6 +187,20 @@ export async function parsePhoto(imageBase64?: string, imagePath?: string): Prom
   if (upload.width && upload.height) {
     info.width = upload.width;
     info.height = upload.height;
+  }
+  if ("thumbnail" in upload && upload.thumbnail) {
+    const { buffer, width, height } = upload.thumbnail;
+    info.thumbnail = { mime: "image/jpeg", base64: buffer.toString("base64"), width, height };
+  } else if ("thumbnailWarning" in upload && upload.thumbnailWarning) {
+    info.thumbnailWarning = upload.thumbnailWarning;
+  } else if (mime === "image/png") {
+    if (buf.length > MAX_PNG_THUMBNAIL_BYTES) {
+      info.thumbnailWarning = `El PNG supera ${MAX_PNG_THUMBNAIL_BYTES} bytes: no se genera miniatura.`;
+    } else if (info.width && info.height) {
+      info.thumbnail = { mime, base64, width: info.width, height: info.height };
+    } else {
+      info.thumbnailWarning = "No se pudieron leer las dimensiones del PNG: no se genera miniatura.";
+    }
   }
 
   if (mime !== "image/jpeg") {

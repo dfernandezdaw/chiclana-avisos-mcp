@@ -130,7 +130,7 @@ Variables de entorno leídas por el proceso MCP:
 | `set_ayuntamiento` | Cambia el municipio activo de la sesión MCP (`ayuntamientoID`). |
 | `list_categories` | Lista las familias, elementos/subcategorías y tipologías de avería disponibles (admite filtro de texto: ej. `farola`, `basura`). |
 | `resolve_location` | Con `lat`+`lng`, devuelve hasta 5 calles cercanas (radio 150 m) con `CalleID` y `Numero`. Con `street_name`, busca en el callejero oficial y devuelve hasta 10 coincidencias (`CalleID`, `Nombre`, `TipoVia`) **sin coordenadas**: no es geocodificación. |
-| `create_aviso_from_photo` | Única herramienta pública para avisos: previsualiza con descripción, categoría GECOR, ubicación y una foto obligatoria (`image_path` o `image_base64`, no ambos); procesa EXIF, reduce la foto si procede y devuelve un resumen con `foto` y un `preview_token` válido 10 minutos y de un solo uso. Tras confirmación explícita, acepta únicamente `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
+| `create_aviso_from_photo` | Única herramienta pública para avisos: previsualiza con descripción, categoría GECOR, ubicación y una foto obligatoria (`image_path` o `image_base64`, no ambos); procesa EXIF, reduce la foto si procede y devuelve un resumen con `foto` y un `preview_token` válido 10 minutos y de un solo uso, más una miniatura como contenido de imagen para que el agente redacte y verifique la descripción. Sin `description`, devuelve `phase: need_description` con la miniatura y sin token. Tras confirmación explícita, acepta únicamente `preview_token`, `confirm: true` y `human_confirmed: true`. La foto se sube solo en el envío confirmado. |
 | `list_my_avisos` | Lista las incidencias registradas por el usuario del token con su estado de tramitación. Es la comprobación obligatoria tras un envío ambiguo. |
 
 ---
@@ -154,7 +154,8 @@ La dirección textual no se geocodifica en este proyecto: `resolve_location` por
 - `image_path` debe estar dentro de los directorios permitidos (`GECOR_PHOTO_DIRS`; por defecto el temporal del sistema, `~/Downloads`, `~/Pictures`, `~/Desktop` y `~/.hermes`) y apuntar a un fichero regular. Si no, usa `image_base64` (admite prefijo `data:image/...;base64,`).
 - GPS: solo se lee el EXIF de JPEG. Los PNG, las fotos reenviadas por apps que eliminan metadatos (p. ej. Telegram, salvo envío como archivo) y las capturas no aportan coordenadas.
 - Reducción: los JPEG cuyo lado mayor supera 2048 px se reducen a 2048 px (calidad 85) conservando los segmentos EXIF/XMP originales, incluida la orientación. Si la reducción no es posible, se sube el original y la previsualización lo indica en `foto.aviso_reduccion`. Los PNG se suben sin cambios.
-- La previsualización incluye `foto` con `mime`, `original_bytes`, `upload_bytes`, `width`, `height`, `reducida` y `exif_conservado`.
+- Miniatura: la previsualización devuelve al modelo una imagen JPEG de lado mayor ≤ 1024 px (calidad 80) sin EXIF ni GPS, con la orientación ya aplicada; los PNG de hasta 1 MB se devuelven tal cual y los mayores no tienen miniatura. La miniatura nunca se sube: GECOR recibe la copia de 2048 px con EXIF. Si no se puede generar, la previsualización continúa sin ella.
+- La previsualización incluye `foto` con `mime`, `original_bytes`, `upload_bytes`, `width`, `height`, `reducida`, `exif_conservado` y `miniatura` (más `aviso_miniatura` si no se pudo generar).
 
 ### Errores y reintentos
 

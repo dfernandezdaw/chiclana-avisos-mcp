@@ -34,6 +34,7 @@ interface PendingAvisoPreview {
 
 const PREVIEW_TTL_MS = 10 * 60 * 1000;
 const MAX_PENDING_PREVIEWS = 100;
+const MAX_DESCRIPTION_LENGTH = 1000;
 
 export function assertSubmissionEnabled(env: NodeJS.ProcessEnv = process.env): void {
   if (env.GECOR_ALLOW_SUBMISSION !== "true") {
@@ -42,13 +43,19 @@ export function assertSubmissionEnabled(env: NodeJS.ProcessEnv = process.env): v
 }
 
 type ToolArgs = Record<string, unknown> | undefined;
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+type ToolResult = { content: ToolContent[]; isError?: boolean };
 type ToolHandler = (args: ToolArgs) => Promise<ToolResult>;
 
 function parseCoordinate(value: unknown, min: number, max: number, label: "Latitud" | "Longitud"): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n < min || n > max) throw new Error(`${label} inválida: debe ser un número entre ${min} y ${max}.`);
   return n;
+}
+
+/** Bloque de imagen MCP con la miniatura; nunca va dentro del JSON de texto */
+function thumbnailContent(photo: PhotoInfo): ToolContent[] {
+  return photo.thumbnail ? [{ type: "image", data: photo.thumbnail.base64, mimeType: photo.thumbnail.mime }] : [];
 }
 
 /** Mensaje accionable cuando no hay coordenadas explícitas ni GPS EXIF utilizable. */
@@ -152,12 +159,12 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     },
     {
       name: "create_aviso_from_photo",
-      description: "Única herramienta para avisos, en dos fases. Para previsualizar, llama con los campos del aviso y una foto obligatoria (image_path o image_base64), sin preview_token ni campos de confirmación. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
+      description: "Única herramienta para avisos, en dos fases. Para previsualizar, llama con los campos del aviso y una foto obligatoria (image_path o image_base64), sin preview_token ni campos de confirmación. La previsualización devuelve además una miniatura de la foto (imagen JPEG ≤1024 px sin EXIF, o el PNG pequeño tal cual) para que redactes la descripción y compruebes la categoría con lo visible; si omites description, devuelve phase: need_description con la miniatura y sin preview_token. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         properties: {
-          description: { type: "string", description: "Descripción concreta del desperfecto." },
+          description: { type: "string", description: "Descripción factual del desperfecto, redactada por el agente a partir de lo visible en la foto y lo que diga el usuario (1–2 frases; no inventes datos). Si se omite, la previsualización devuelve la miniatura para redactarla." },
           tipoElementoID: { type: "number", description: "ID de elemento/subcategoría de list_categories." },
           tipoIncID: { type: "number", description: "ID del tipo de incidencia de list_categories." },
           desTipoElemento: { type: "string", description: "Nombre del elemento/subcategoría." },
@@ -394,20 +401,21 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     const imagePath = typeof args?.image_path === "string" && args.image_path.trim() ? args.image_path : undefined;
     const imageBase64 = typeof args?.image_base64 === "string" && args.image_base64.trim() ? args.image_base64 : undefined;
     if (!imagePath && !imageBase64) throw new Error("Se requiere una foto mediante image_path o image_base64 para previsualizar.");
+    if (imagePath && imageBase64) throw new Error("Proporciona solo image_path o image_base64, no ambos.");
 
-    let photoWarning: string | undefined;
-    const hasPhoto = Boolean(imagePath || imageBase64);
-    let photoDataUri: string | undefined;
-    let photoSummary: Record<string, unknown> | undefined;
-    const petitioner = client.getPetitionerIdentity();
-    const ayto = await client.getAyuntamiento();
-
-    if (!String(args?.description ?? "").trim()) throw new Error("La descripción no puede estar vacía.");
+    const description = String(args?.description ?? "").trim();
+    if (description.length > MAX_DESCRIPTION_LENGTH) {
+      throw new Error(`La descripción es demasiado larga (máximo ${MAX_DESCRIPTION_LENGTH} caracteres): resúmela en 1–2 frases.`);
+    }
+    // Sin descripción se devuelve la miniatura para redactarla: la categoría puede elegirse
+    // después de ver la foto, así que solo se valida si se indicó.
+    for (const key of ["tipoElementoID", "tipoIncID"] as const) {
+      if (!description && args?.[key] === undefined) continue;
+      const id = Number(args?.[key]);
+      if (!Number.isInteger(id) || id <= 0) throw new Error(`${key} debe ser un entero positivo.`);
+    }
     const tipoElementoID = Number(args?.tipoElementoID);
     const tipoIncID = Number(args?.tipoIncID);
-    if (!Number.isInteger(tipoElementoID) || tipoElementoID <= 0) throw new Error("tipoElementoID debe ser un entero positivo.");
-    if (!Number.isInteger(tipoIncID) || tipoIncID <= 0) throw new Error("tipoIncID debe ser un entero positivo.");
-    if (imagePath && imageBase64) throw new Error("Proporciona solo image_path o image_base64, no ambos.");
 
     const hasLat = args?.lat !== undefined;
     const hasLng = args?.lng !== undefined;
@@ -417,35 +425,57 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     let lat = hasLat ? parseCoordinate(args?.lat, -90, 90, "Latitud") : undefined;
     let lng = hasLng ? parseCoordinate(args?.lng, -180, 180, "Longitud") : undefined;
 
-    let photoInfo: PhotoInfo | undefined;
-    if (imagePath || imageBase64) {
-      try {
-        const photo = await parsePhoto(imageBase64, imagePath);
-        photoInfo = photo;
-        photoDataUri = photo.dataUri;
-        photoSummary = {
-          mime: photo.mime,
-          original_bytes: photo.bytes,
-          upload_bytes: photo.uploadBytes,
-          width: photo.width,
-          height: photo.height,
-          reducida: photo.reduced,
-          exif_conservado: photo.exifPreserved,
-          ...(photo.reductionWarning ? { aviso_reduccion: photo.reductionWarning } : {}),
-        };
-        if (photo.gps && lat === undefined) {
-          lat = photo.gps.lat;
-          lng = photo.gps.lng;
-        }
-        photoWarning = photo.warning;
-      } catch (err: any) {
-        photoWarning = `No se pudo procesar la imagen: ${err.message}`;
-        throw new Error(photoWarning);
-      }
+    let photo: PhotoInfo;
+    try {
+      photo = await parsePhoto(imageBase64, imagePath);
+    } catch (err: any) {
+      throw new Error(`No se pudo procesar la imagen: ${err.message}`);
+    }
+    const photoDataUri = photo.dataUri;
+    const photoSummary: Record<string, unknown> = {
+      mime: photo.mime,
+      original_bytes: photo.bytes,
+      upload_bytes: photo.uploadBytes,
+      width: photo.width,
+      height: photo.height,
+      reducida: photo.reduced,
+      exif_conservado: photo.exifPreserved,
+      miniatura: Boolean(photo.thumbnail),
+      ...(photo.reductionWarning ? { aviso_reduccion: photo.reductionWarning } : {}),
+      ...(photo.thumbnailWarning ? { aviso_miniatura: photo.thumbnailWarning } : {}),
+    };
+    if (photo.gps && lat === undefined) {
+      lat = photo.gps.lat;
+      lng = photo.gps.lng;
+    }
+    const photoWarning = photo.warning;
+
+    if (!description) {
+      // Fase sin efectos: no se consulta GECOR ni se guarda ninguna previsualización.
+      const needDescription = {
+        phase: "need_description",
+        foto: photoSummary,
+        aviso_foto: photoWarning,
+        ...(lat === undefined || lng === undefined ? { aviso_ubicacion: missingLocationMessage(photo) } : {}),
+        instruccion: [
+          photo.thumbnail
+            ? "Mira la miniatura adjunta y redacta en español 1–2 frases factuales con lo visible en la imagen y lo que haya dicho el usuario: el elemento, el daño y dónde está dentro de la imagen."
+            : "No hay miniatura disponible: redacta en español 1–2 frases factuales solo con lo que haya dicho el usuario sobre el elemento y el daño.",
+          "No inventes datos que no se vean: medidas, peligro, antigüedad ni causas.",
+          "Si el daño no está claro, pregunta al usuario antes de redactar.",
+          "Después vuelve a llamar a create_aviso_from_photo con la misma foto, la categoría, la ubicación y description.",
+        ].join(" "),
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(needDescription, null, 2) }, ...thumbnailContent(photo)],
+      };
     }
 
+    const petitioner = client.getPetitionerIdentity();
+    const ayto = await client.getAyuntamiento();
+
     if (lat === undefined || lng === undefined) {
-      throw new Error(photoInfo ? missingLocationMessage(photoInfo) : "No se encontró ninguna ubicación para el aviso.");
+      throw new Error(missingLocationMessage(photo));
     }
     // Defensa en profundidad: la ubicación final (explícita o EXIF) debe estar en rango.
     if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
@@ -453,7 +483,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     }
 
     const payload: PendingAvisoPreview["payload"] = {
-      description: String(args?.description).trim(),
+      description,
       petitioner,
       tipoElementoID,
       tipoIncID,
@@ -484,12 +514,17 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
       categoria: { tipoElementoID, desTipoElemento: payload.desTipoElemento, tipoIncID, tipoInc: payload.tipoInc },
       ubicacion: { lat, lng, numCalle: payload.numCalle, desUbicacion: payload.desUbicacion, calleID: payload.calleID },
       descripcion: payload.description,
-      foto_adjunta: hasPhoto,
+      foto_adjunta: true,
       foto: photoSummary,
       aviso_foto: photoWarning,
       preview_token: previewToken,
       expira_en_segundos: PREVIEW_TTL_MS / 1000,
-      instruccion: "Muestra este resumen al usuario y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Confirma solo ese sí exacto con create_aviso_from_photo, confirm:true, human_confirmed:true y este preview_token.",
+      instruccion: [
+        photo.thumbnail
+          ? "Antes de mostrar el resumen, mira la miniatura adjunta y verifica que la categoría y la descripción coinciden con lo visible en la imagen; si no coinciden, corrígelas y crea una nueva previsualización."
+          : "",
+        "Muestra este resumen al usuario, incluida la descripción, y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Confirma solo ese sí exacto con create_aviso_from_photo, confirm:true, human_confirmed:true y este preview_token.",
+      ].filter(Boolean).join(" "),
     };
 
     return {
@@ -498,6 +533,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
           type: "text",
           text: JSON.stringify({ phase: "preview", ...preview }, null, 2),
         },
+        ...thumbnailContent(photo),
       ],
     };
   }

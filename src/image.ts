@@ -1,10 +1,13 @@
 /**
  * Reducción de fotos JPEG conservando los segmentos APP1 (Exif/XMP) originales
+ * y miniatura sin metadatos para que el modelo vea la foto
  */
 import jpeg from "jpeg-js";
 
 export const MAX_UPLOAD_SIDE = 2048;
+export const MAX_THUMBNAIL_SIDE = 1024;
 const JPEG_QUALITY = 85;
+const THUMBNAIL_QUALITY = 80;
 const MAX_DECODE_MP = 100;
 const MAX_DECODE_MEMORY_MB = 512;
 const MAX_APP1_PAYLOAD = 65533;
@@ -22,6 +25,22 @@ export interface ReducedJpeg {
   height?: number;
   /** Motivo por el que se sube el original sin reducir, si la reducción falló. */
   warning?: string;
+  /** JPEG ≤ MAX_THUMBNAIL_SIDE sin APP1, con la orientación EXIF ya aplicada a los píxeles. */
+  thumbnail?: JpegThumbnail;
+  /** Motivo por el que no hay miniatura. */
+  thumbnailWarning?: string;
+}
+
+export interface JpegThumbnail {
+  buffer: Buffer;
+  width: number;
+  height: number;
+}
+
+interface DecodedRgb {
+  width: number;
+  height: number;
+  data: Uint8Array;
 }
 
 interface JpegSegment {
@@ -144,17 +163,68 @@ function downscaleRgb(src: Uint8Array, srcW: number, srcH: number, dstW: number,
   return rgba;
 }
 
+/** Dimensiones que caben en `max` px de lado mayor conservando la proporción */
+function fitWithin(width: number, height: number, max: number): ImageSize {
+  if (Math.max(width, height) <= max) return { width, height };
+  const scale = Math.max(width, height) / max;
+  return {
+    width: Math.max(1, Math.min(max, Math.round(width / scale))),
+    height: Math.max(1, Math.min(max, Math.round(height / scale))),
+  };
+}
+
+/** Aplica la orientación EXIF (1-8) a píxeles RGBA; 5-8 intercambian ancho y alto */
+function orientRgba(src: Buffer, w: number, h: number, orientation: number): { data: Buffer; width: number; height: number } {
+  if (!Number.isInteger(orientation) || orientation < 2 || orientation > 8) return { data: src, width: w, height: h };
+  const swap = orientation >= 5;
+  const outW = swap ? h : w;
+  const out = Buffer.alloc(src.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let dx = x, dy = y;
+      switch (orientation) {
+        case 2: dx = w - 1 - x; break;
+        case 3: dx = w - 1 - x; dy = h - 1 - y; break;
+        case 4: dy = h - 1 - y; break;
+        case 5: dx = y; dy = x; break;
+        case 6: dx = h - 1 - y; dy = x; break;
+        case 7: dx = h - 1 - y; dy = w - 1 - x; break;
+        case 8: dx = y; dy = w - 1 - x; break;
+      }
+      src.copy(out, (dy * outW + dx) * 4, (y * w + x) * 4, (y * w + x) * 4 + 4);
+    }
+  }
+  return { data: out, width: outW, height: swap ? w : h };
+}
+
+/** Miniatura JPEG sin segmentos APP1: jpeg-js solo escribe APP0/JFIF al codificar */
+function encodeThumbnail(decoded: DecodedRgb, orientation: number): JpegThumbnail {
+  const size = fitWithin(decoded.width, decoded.height, MAX_THUMBNAIL_SIDE);
+  const rgba = downscaleRgb(decoded.data, decoded.width, decoded.height, size.width, size.height);
+  const oriented = orientRgba(rgba, size.width, size.height, orientation);
+  const buffer = Buffer.from(jpeg.encode(oriented, THUMBNAIL_QUALITY).data);
+  return { buffer, width: oriented.width, height: oriented.height };
+}
+
 /**
  * Reduce un JPEG cuyo lado mayor supere MAX_UPLOAD_SIDE. No rota píxeles: los APP1
  * originales (incluida Orientation) se insertan tras SOI y siguen siendo válidos.
+ * Con los mismos píxeles decodificados genera la miniatura para el modelo, que sí
+ * se rota según `orientation` porque no lleva EXIF.
  */
-export function reduceJpeg(buf: Buffer): ReducedJpeg {
+export function reduceJpeg(buf: Buffer, orientation = 1): ReducedJpeg {
   const app1 = extractApp1Segments(buf);
   const size = readJpegSize(buf);
   const original: ReducedJpeg = { buffer: buf, reduced: false, exifPreserved: app1.length > 0, ...size };
-  if (!size || Math.max(size.width, size.height) <= MAX_UPLOAD_SIDE) return original;
+  const needsReduction = size !== null && Math.max(size.width, size.height) > MAX_UPLOAD_SIDE;
+  const failed = (reason: string): ReducedJpeg => ({
+    ...original,
+    // Una foto válida que jpeg-js no sabe decodificar no debe bloquear el aviso: se sube el original.
+    ...(needsReduction ? { warning: `No se pudo reducir la foto JPEG (${reason}); se subirá sin reducir.` } : {}),
+    thumbnailWarning: `No se pudo generar la miniatura (${reason}).`,
+  });
 
-  let decoded: { width: number; height: number; data: Uint8Array };
+  let decoded: DecodedRgb;
   try {
     decoded = jpeg.decode(buf, {
       useTArray: true,
@@ -163,19 +233,23 @@ export function reduceJpeg(buf: Buffer): ReducedJpeg {
       maxMemoryUsageInMB: MAX_DECODE_MEMORY_MB,
     });
   } catch (err: any) {
-    // Una foto válida que jpeg-js no sabe decodificar no debe bloquear el aviso: se sube el original.
-    return { ...original, warning: `No se pudo reducir la foto JPEG (${err?.message || String(err)}); se subirá sin reducir.` };
+    return failed(err?.message || String(err));
   }
   const { width, height } = decoded;
-  if (decoded.data.length < width * height * 3) {
-    return { ...original, warning: "No se pudo reducir la foto JPEG (datos de imagen incompletos); se subirá sin reducir." };
+  if (decoded.data.length < width * height * 3) return failed("datos de imagen incompletos");
+
+  const withThumbnail: ReducedJpeg = { ...original };
+  try {
+    withThumbnail.thumbnail = encodeThumbnail(decoded, orientation);
+  } catch (err: any) {
+    withThumbnail.thumbnailWarning = `No se pudo generar la miniatura (${err?.message || String(err)}).`;
   }
-  const scale = Math.max(width, height) / MAX_UPLOAD_SIDE;
-  const dstW = Math.max(1, Math.min(MAX_UPLOAD_SIDE, Math.round(width / scale)));
-  const dstH = Math.max(1, Math.min(MAX_UPLOAD_SIDE, Math.round(height / scale)));
-  const rgba = downscaleRgb(decoded.data, width, height, dstW, dstH);
-  const encoded = jpeg.encode({ width: dstW, height: dstH, data: rgba }, JPEG_QUALITY).data;
+  if (!needsReduction) return withThumbnail;
+
+  const dst = fitWithin(width, height, MAX_UPLOAD_SIDE);
+  const rgba = downscaleRgb(decoded.data, width, height, dst.width, dst.height);
+  const encoded = jpeg.encode({ width: dst.width, height: dst.height, data: rgba }, JPEG_QUALITY).data;
   const output = Buffer.concat([encoded.subarray(0, 2), ...app1, encoded.subarray(2)]);
-  if (output.length >= buf.length) return original;
-  return { buffer: output, reduced: true, exifPreserved: app1.length > 0, width: dstW, height: dstH };
+  if (output.length >= buf.length) return withThumbnail;
+  return { ...withThumbnail, buffer: output, reduced: true, width: dst.width, height: dst.height };
 }
