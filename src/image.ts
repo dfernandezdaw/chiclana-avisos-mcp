@@ -174,7 +174,7 @@ function fitWithin(width: number, height: number, max: number): ImageSize {
 }
 
 /** Aplica la orientación EXIF (1-8) a píxeles RGBA; 5-8 intercambian ancho y alto */
-function orientRgba(src: Buffer, w: number, h: number, orientation: number): { data: Buffer; width: number; height: number } {
+export function orientRgba(src: Buffer, w: number, h: number, orientation: number): { data: Buffer; width: number; height: number } {
   if (!Number.isInteger(orientation) || orientation < 2 || orientation > 8) return { data: src, width: w, height: h };
   const swap = orientation >= 5;
   const outW = swap ? h : w;

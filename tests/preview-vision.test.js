@@ -216,14 +216,25 @@ test("small PNG is returned as-is as the thumbnail; large PNG gets none", async 
 });
 
 test("thumbnail failure does not fail the preview", async () => {
-  await withServer(async ({ call }) => {
+  await withServer(async ({ call, calls }) => {
     const result = await call({ description: "farola", tipoElementoID: 1, tipoIncID: 2, lat: 36, lng: -6, image_base64: UNDECODABLE.toString("base64") });
     assert.equal(result.isError, undefined, result.content[0].text);
     assert.equal(result.content.some((item) => item.type === "image"), false);
     const body = JSON.parse(textItem(result));
     assert.equal(body.phase, "preview");
     assert.equal(body.foto.miniatura, false);
-    assert.ok(body.preview_token);
+    assert.equal(typeof body.foto.aviso_miniatura, "string");
+    assert.match(body.foto.aviso_miniatura, /miniatura/);
+    assert.equal(typeof body.preview_token, "string");
+    assert.ok(body.preview_token.length > 0);
+    assert.deepEqual(calls.uploads, []);
+
+    // Sin miniatura el envío sigue funcionando y sube la foto original intacta.
+    const accepted = await call({ preview_token: body.preview_token, confirm: true, human_confirmed: true });
+    assert.equal(accepted.isError, undefined, accepted.content[0].text);
+    assert.deepEqual(calls.uploads, [`data:image/jpeg;base64,${UNDECODABLE.toString("base64")}`]);
+    assert.ok(calls.client.includes("nuevaIncidencia"));
+    assert.deepEqual(calls.fetch, []);
   });
 });
 
