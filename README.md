@@ -60,7 +60,7 @@ Cualquier cliente que lance servidores MCP por stdio necesita los mismos tres el
 
 Consulta la documentación de tu cliente para el formato exacto del fichero de configuración.
 
-Confirmar una previsualización envía un aviso real al ayuntamiento. Antes de enviar, el agente siempre te muestra el resumen y espera tu «sÃ­».
+Confirmar una previsualización envía un aviso real al ayuntamiento. Antes de enviar, el agente siempre te muestra el resumen y espera tu «sí».
 
 ### Para agentes de IA
 
