@@ -60,7 +60,7 @@ Cualquier cliente que lance servidores MCP por stdio necesita los mismos tres el
 
 Consulta la documentación de tu cliente para el formato exacto del fichero de configuración.
 
-No hay ninguna variable que habilite o bloquee el envío: con `GECOR_TOKEN` configurado, confirmar una previsualización envía un aviso real al ayuntamiento. La protección es la confirmación explícita de la persona al resumen exacto.
+Confirmar una previsualización envía un aviso real al ayuntamiento. Antes de enviar, el agente siempre te muestra el resumen y espera tu «sÃ­».
 
 ### Para agentes de IA
 
@@ -164,8 +164,6 @@ La dirección textual no se geocodifica en este proyecto: `resolve_location` por
 ### Skill reutilizable
 
 El artefacto de instrucciones, independiente de cualquier plataforma o harness, está en [`skill/SKILL.md`](skill/SKILL.md). Su instalación es manual: colócalo en el directorio de skills que admita tu cliente. Mantén el proceso MCP en un entorno con acceso a las rutas locales que le proporciones; este proyecto no modifica configuraciones externas.
-
-Ya no existe la variable `GECOR_ALLOW_SUBMISSION` (eliminada): si sigue en tu configuración se ignora, también con el valor `false`. Cualquier envío confirmado con un token válido crea un aviso real, así que no uses credenciales de producción en desarrollo ni en pruebas.
 
 ---
 
