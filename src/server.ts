@@ -36,12 +36,6 @@ const PREVIEW_TTL_MS = 10 * 60 * 1000;
 const MAX_PENDING_PREVIEWS = 100;
 const MAX_DESCRIPTION_LENGTH = 1000;
 
-export function assertSubmissionEnabled(env: NodeJS.ProcessEnv = process.env): void {
-  if (env.GECOR_ALLOW_SUBMISSION !== "true") {
-    throw new Error("Envío deshabilitado: configura GECOR_ALLOW_SUBMISSION=true para habilitar subidas y envíos a GECOR.");
-  }
-}
-
 type ToolArgs = Record<string, unknown> | undefined;
 type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 type ToolResult = { content: ToolContent[]; isError?: boolean };
@@ -159,7 +153,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     },
     {
       name: "create_aviso_from_photo",
-      description: "Única herramienta para avisos, en dos fases. Para previsualizar, llama con los campos del aviso y una foto obligatoria (image_path o image_base64), sin preview_token ni campos de confirmación. La previsualización devuelve además una miniatura de la foto (imagen JPEG ≤1024 px sin EXIF, o el PNG pequeño tal cual) para que redactes la descripción y compruebes la categoría con lo visible; si omites description, devuelve phase: need_description con la miniatura y sin preview_token. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La foto se sube únicamente durante el envío confirmado y este sigue bloqueado salvo que GECOR_ALLOW_SUBMISSION=true.",
+      description: "Única herramienta para avisos, en dos fases. Para previsualizar, llama con los campos del aviso y una foto obligatoria (image_path o image_base64), sin preview_token ni campos de confirmación. La previsualización devuelve además una miniatura de la foto (imagen JPEG ≤1024 px sin EXIF, o el PNG pequeño tal cual) para que redactes la descripción y compruebes la categoría con lo visible; si omites description, devuelve phase: need_description con la miniatura y sin preview_token. Enseña el resumen exacto y espera un sí explícito. Solo entonces vuelve a llamar con únicamente preview_token, confirm:true y human_confirmed:true. Si el usuario pide cambios, crea una nueva previsualización; nunca envíes por inferencia. La previsualización no envía nada; confirmar envía un aviso real al ayuntamiento y la foto se sube únicamente durante ese envío confirmado.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -508,7 +502,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     pendingPreviews.set(previewToken, { payload, photoDataUri, ayuntamientoID: ayto.AyuntamientoID, expiresAt: now + PREVIEW_TTL_MS });
 
     const preview = {
-      modo: "DRY-RUN (no se envía nada ni se suben fotos)",
+      modo: "PREVISUALIZACIÓN (aún no se ha enviado nada ni se ha subido la foto)",
       ayuntamiento: ayto.Nombre,
       ayuntamientoID: ayto.AyuntamientoID,
       categoria: { tipoElementoID, desTipoElemento: payload.desTipoElemento, tipoIncID, tipoInc: payload.tipoInc },
@@ -523,7 +517,7 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
         photo.thumbnail
           ? "Antes de mostrar el resumen, mira la miniatura adjunta y verifica que la categoría y la descripción coinciden con lo visible en la imagen; si no coinciden, corrígelas y crea una nueva previsualización."
           : "",
-        "Muestra este resumen al usuario, incluida la descripción, y espera su sí explícito. Si pide cambios, crea una nueva previsualización. Confirma solo ese sí exacto con create_aviso_from_photo, confirm:true, human_confirmed:true y este preview_token.",
+        "Muestra este resumen al usuario, incluida la descripción, y espera su sí explícito: confirmar envía un aviso real al ayuntamiento. Si pide cambios, crea una nueva previsualización. Confirma solo ese sí exacto con create_aviso_from_photo, confirm:true, human_confirmed:true y este preview_token.",
       ].filter(Boolean).join(" "),
     };
 
@@ -544,12 +538,11 @@ export function createMcpServer(client: GecorClient = new GecorClient()): Server
     }
     const previewToken = typeof args?.preview_token === "string" ? args.preview_token : "";
     const preview = pendingPreviews.get(previewToken);
-    if (!preview) throw new Error("Previsualización inexistente, vencida o ya utilizada. Genera un nuevo dry-run y solicita aprobación otra vez.");
+    if (!preview) throw new Error("Previsualización inexistente, vencida o ya utilizada. Genera una nueva previsualización y solicita aprobación otra vez.");
     if (preview.expiresAt <= Date.now()) {
       pendingPreviews.delete(previewToken);
-      throw new Error("La previsualización venció. Genera un nuevo dry-run y solicita aprobación otra vez.");
+      throw new Error("La previsualización venció. Genera una nueva previsualización y solicita aprobación otra vez.");
     }
-    assertSubmissionEnabled();
     // Burn before any side effect so retries can never create duplicate incidents.
     pendingPreviews.delete(previewToken);
 

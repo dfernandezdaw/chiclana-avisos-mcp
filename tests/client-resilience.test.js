@@ -150,8 +150,6 @@ class TestTransport {
 }
 
 async function submitWith(fakeOverrides) {
-  const previous = process.env.GECOR_ALLOW_SUBMISSION;
-  process.env.GECOR_ALLOW_SUBMISSION = "true";
   const calls = { upload: 0, submit: 0 };
   const fakeClient = {
     ayuntamientoID: 268,
@@ -180,8 +178,6 @@ async function submitWith(fakeOverrides) {
   } finally {
     await client.close();
     await server.close();
-    if (previous === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-    else process.env.GECOR_ALLOW_SUBMISSION = previous;
   }
 }
 

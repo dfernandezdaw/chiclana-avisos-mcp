@@ -162,8 +162,6 @@ class TestTransport {
 }
 
 test("MCP preview reports the reduced photo and the confirmed submit uploads the reduced data URI", async () => {
-  const previous = process.env.GECOR_ALLOW_SUBMISSION;
-  process.env.GECOR_ALLOW_SUBMISSION = "true";
   const uploads = [];
   const fakeClient = {
     ayuntamientoID: 268,
@@ -212,7 +210,5 @@ test("MCP preview reports the reduced photo and the confirmed submit uploads the
   } finally {
     await client.close();
     await server.close();
-    if (previous === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-    else process.env.GECOR_ALLOW_SUBMISSION = previous;
   }
 });

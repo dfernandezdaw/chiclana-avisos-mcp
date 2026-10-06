@@ -34,8 +34,7 @@ Añade a `claude_desktop_config.json`:
       "args": ["-y", "chiclana-avisos-mcp"],
       "env": {
         "GECOR_TOKEN": "<tu-token-gecor>",
-        "GECOR_AYTO_ID": "268",
-        "GECOR_ALLOW_SUBMISSION": "false"
+        "GECOR_AYTO_ID": "268"
       }
     }
   }
@@ -48,7 +47,6 @@ Añade a `claude_desktop_config.json`:
 claude mcp add chiclana-avisos \
   -e GECOR_TOKEN=<tu-token-gecor> \
   -e GECOR_AYTO_ID=268 \
-  -e GECOR_ALLOW_SUBMISSION=false \
   -- npx -y chiclana-avisos-mcp
 ```
 
@@ -58,21 +56,21 @@ Cualquier cliente que lance servidores MCP por stdio necesita los mismos tres el
 
 - **command**: `npx`
 - **args**: `["-y", "chiclana-avisos-mcp"]`
-- **env**: `GECOR_TOKEN`, `GECOR_AYTO_ID` (por defecto `268`) y `GECOR_ALLOW_SUBMISSION` (`false` hasta que quieras enviar avisos reales)
+- **env**: `GECOR_TOKEN` y `GECOR_AYTO_ID` (por defecto `268`)
 
 Consulta la documentación de tu cliente para el formato exacto del fichero de configuración.
 
-`GECOR_ALLOW_SUBMISSION` en `false` permite previsualizar avisos sin enviarlos. Cámbialo a `true` solo cuando quieras registrar avisos reales.
+No hay ninguna variable que habilite o bloquee el envío: con `GECOR_TOKEN` configurado, confirmar una previsualización envía un aviso real al ayuntamiento. La protección es la confirmación explícita de la persona al resumen exacto.
 
 ### Para agentes de IA
 
 Si eres un agente configurando este servidor para un usuario:
 
 1. Pide al usuario su token de GECOR (ver [1. Obtener el token de GECOR](#1-obtener-el-token-de-gecor)); no lo busques ni lo extraigas por tu cuenta.
-2. Configura la entrada MCP con `npx -y chiclana-avisos-mcp`, el token en `env` de esa entrada y `GECOR_ALLOW_SUBMISSION` en `false`. Chiclana es `GECOR_AYTO_ID=268`; para otro municipio, obtén su ID con `list_ayuntamientos`.
+2. Configura la entrada MCP con `npx -y chiclana-avisos-mcp` y el token en `env` de esa entrada. Chiclana es `GECOR_AYTO_ID=268`; para otro municipio, obtén su ID con `list_ayuntamientos`.
 3. Reinicia el cliente y llama a `whoami`: confirma el municipio activo y que hay token configurado, pero no valida el token. Para comprobar que GECOR lo acepta, llama a `list_my_avisos` (solo lectura).
-4. Mantén el envío deshabilitado hasta que el usuario confirme expresamente que quiere enviar avisos reales; solo entonces cambia `GECOR_ALLOW_SUBMISSION` a `true`.
-5. Sigue el flujo de [`skill/SKILL.md`](skill/SKILL.md): previsualizar, mostrar el resumen y enviar solo tras confirmación explícita.
+4. Sigue el flujo de [`skill/SKILL.md`](skill/SKILL.md): previsualizar, mostrar el resumen y enviar solo tras confirmación explícita.
+5. Confirmar envía un aviso real al ayuntamiento: llama al envío confirmado únicamente después de un «sí» explícito de la persona al resumen exacto mostrado. Nunca confirmes por inferencia, por silencio ni ante una respuesta ambigua.
 
 ### Desde el código
 
@@ -111,7 +109,6 @@ Variables de entorno leídas por el proceso MCP:
 |---|---|---|
 | `GECOR_TOKEN` | (vacío) | Token de sesión GECOR. Obligatorio para `list_my_avisos` y para enviar avisos; también identifica al peticionario. |
 | `GECOR_AYTO_ID` | `268` | Municipio activo inicial (Chiclana de la Frontera). |
-| `GECOR_ALLOW_SUBMISSION` | (ausente) | Guard de envío: solo el valor exacto `true` permite subir la foto y crear el aviso. |
 | `GECOR_API_URL` | `https://gecorapiwe.azurewebsites.net/api` | URL base de la API de GECOR. |
 | `GECOR_PROCEDENCIA_WEB` | `1390` | Procedencia del aviso cuando la ficha del ayuntamiento en GECOR no incluye `ProcedenciaWeb`. Valores que no sean enteros positivos usan el defecto. |
 | `GECOR_LANGUAGE` | `es` | Idioma de las consultas a GECOR (p. ej. listado de municipios). |
@@ -135,14 +132,14 @@ Variables de entorno leídas por el proceso MCP:
 
 ---
 
-## 🔒 Seguridad y Filosofía Dry-run
+## 🔒 Seguridad y confirmación explícita
 
-El flujo de envío requiere confirmación explícita; la previsualización por sí sola no crea ningún aviso:
+El flujo de envío requiere confirmación explícita; la previsualización por sí sola no crea ningún aviso ni sube la foto, pero confirmarla envía un aviso real al ayuntamiento:
 
 1. Usa `create_aviso_from_photo` para ambas fases. Para previsualizar, envía los campos del aviso y una foto no vacía mediante `image_path` o `image_base64`, sin token ni campos de confirmación. Usa `list_categories` para identificar categorías. La herramienta procesa EXIF internamente durante la previsualización; no existe una herramienta independiente `parse_photo_gps`.
 2. Muestra un resumen breve de categoría, descripción, dirección/referencia, foto y ubicación disponible. No incluyas peticionario, tokens, payload crudo ni identidad privada.
 3. Espera un sí inequívoco al resumen exacto en la misma conversación. Ante cambios o respuesta ambigua, crea una previsualización nueva y vuelve a pedir confirmación.
-4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Si el guard está deshabilitado o falla la llamada, informa que el aviso NO se envió; nunca eludas el guard ni reintentes una escritura posiblemente completada.
+4. Tras confirmar, llama al mismo tool solo con `preview_token`, `confirm: true` y `human_confirmed: true`. Haz esta llamada solo tras un «sí» explícito al resumen exacto. Si falla la validación o la subida de la foto, informa que el aviso NO se envió; nunca reintentes una escritura posiblemente completada.
 5. `estado: ENVIADO_EXITOSAMENTE` en la respuesta wrapper de Chiclana indica que la llamada MCP/API tuvo éxito, no que ese sea el estado de tramitación municipal. Comunica únicamente lo que devolvió la API: informa un número oficial de ticket o estado de tramitación solo si aparece en `resultado` devuelto por GECOR o está verificado inequívocamente; no lo adivines.
 
 La dirección textual no se geocodifica en este proyecto: `resolve_location` por nombre de calle solo devuelve el `CalleID`. Si la foto no aporta GPS EXIF, solicita coordenadas explícitas; nunca inventes ubicación. Prefiere la foto original para conservar EXIF. No se admite subida remota HTTP.
@@ -168,7 +165,7 @@ La dirección textual no se geocodifica en este proyecto: `resolve_location` por
 
 El artefacto de instrucciones, independiente de cualquier plataforma o harness, está en [`skill/SKILL.md`](skill/SKILL.md). Su instalación es manual: colócalo en el directorio de skills que admita tu cliente. Mantén el proceso MCP en un entorno con acceso a las rutas locales que le proporciones; este proyecto no modifica configuraciones externas.
 
-El guard `GECOR_ALLOW_SUBMISSION` permanece fail-closed: solo el valor exacto `true` permite el envío confirmado. Dejalo ausente o en `false` durante desarrollo y pruebas; en el proceso MCP de producción, configuralo explícitamente como `true`. Si está deshabilitado, no se sube la foto ni se crea el aviso. No elimines este guard ni uses credenciales de producción en pruebas.
+Ya no existe la variable `GECOR_ALLOW_SUBMISSION` (eliminada): si sigue en tu configuración se ignora, también con el valor `false`. Cualquier envío confirmado con un token válido crea un aviso real, así que no uses credenciales de producción en desarrollo ni en pruebas.
 
 ---
 

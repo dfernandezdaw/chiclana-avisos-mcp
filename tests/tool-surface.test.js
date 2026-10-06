@@ -39,9 +39,7 @@ function assertNoPetitioner(result, label) {
 }
 
 async function withServer(run) {
-  const previousAllow = process.env.GECOR_ALLOW_SUBMISSION;
   const previousFetch = globalThis.fetch;
-  process.env.GECOR_ALLOW_SUBMISSION = "true";
   const calls = { fetch: [], client: [] };
   globalThis.fetch = async (...fetchArgs) => {
     calls.fetch.push(String(fetchArgs[0]));
@@ -64,8 +62,6 @@ async function withServer(run) {
     await client.close();
     await server.close();
     globalThis.fetch = previousFetch;
-    if (previousAllow === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-    else process.env.GECOR_ALLOW_SUBMISSION = previousAllow;
   }
 }
 

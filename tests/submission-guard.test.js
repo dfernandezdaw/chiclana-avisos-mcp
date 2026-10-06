@@ -24,8 +24,6 @@ function linkedTransports() {
 }
 
 test("photo-to-notice facade previews without writes and confirms only its bound payload", async () => {
-  const previous = process.env.GECOR_ALLOW_SUBMISSION;
-  process.env.GECOR_ALLOW_SUBMISSION = "true";
   const calls = { upload: [], submit: [] };
   const fakeClient = {
     ayuntamientoID: 268,
@@ -81,15 +79,8 @@ test("photo-to-notice facade previews without writes and confirms only its bound
     } });
     assert.equal(changed.isError, true);
 
-    process.env.GECOR_ALLOW_SUBMISSION = "false";
-    const disabled = await client.callTool({ name: "create_aviso_from_photo", arguments: {
-      preview_token: preview.preview_token, confirm: true, human_confirmed: true,
-    } });
-    assert.equal(disabled.isError, true);
-    assert.match(disabled.content[0].text, /GECOR_ALLOW_SUBMISSION=true/);
     assert.deepEqual(calls, { upload: [], submit: [] });
 
-    process.env.GECOR_ALLOW_SUBMISSION = "true";
     const accepted = await client.callTool({ name: "create_aviso_from_photo", arguments: {
       preview_token: preview.preview_token, confirm: true, human_confirmed: true,
     } });
@@ -111,53 +102,54 @@ test("photo-to-notice facade previews without writes and confirms only its bound
     assert.equal(calls.submit.length, 1);
   } finally {
     await client.close(); await server.close();
-    if (previous === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-    else process.env.GECOR_ALLOW_SUBMISSION = previous;
   }
 });
 
-test("blocked MCP submission preserves the exact photo-backed preview for later opt-in", async () => {
+test("confirmed submission needs no env opt-in and ignores the removed GECOR_ALLOW_SUBMISSION", async () => {
+  // GECOR_ALLOW_SUBMISSION se eliminó: ni ausente ni "false" bloquean un envío confirmado.
   const previous = process.env.GECOR_ALLOW_SUBMISSION;
-  delete process.env.GECOR_ALLOW_SUBMISSION;
-  const calls = { upload: 0, submit: 0, uploadedPhoto: undefined };
+  const calls = { upload: [], submit: [] };
   const fakeClient = {
     ayuntamientoID: 268,
     getPetitionerIdentity() { return { Nombre: "Ada", Email: "ada@example.test", Movil: "123", CiudadanoID: 9 }; },
     async getAyuntamiento() { return { AyuntamientoID: 268, Nombre: "Example" }; },
-    async guardarFotoBase64(dataUri) { calls.upload++; calls.uploadedPhoto = dataUri; return "fixture-photo"; },
-    async nuevaIncidencia() { calls.submit++; return { accepted: true }; },
+    async guardarFotoBase64(dataUri) { calls.upload.push(dataUri); return "fixture-photo"; },
+    async nuevaIncidencia(payload) { calls.submit.push(payload); return { accepted: true }; },
   };
   const server = createMcpServer(fakeClient);
   const client = new Client({ name: "test-client", version: "1.0" });
   const [clientTransport, serverTransport] = linkedTransports();
   try {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-    const previewResult = await client.callTool({
-      name: "create_aviso_from_photo",
-      arguments: {
-        description: "fixture description", tipoElementoID: 1, tipoIncID: 2,
-        lat: 36, lng: -6, image_base64: FIXTURE_IMAGE.toString("base64"),
-      },
-    });
-    const preview = JSON.parse(previewResult.content[0].text);
-    assert.equal(preview.phase, "preview");
-    assert.equal(Object.hasOwn(preview, "peticionario"), false);
     const expectedPhotoDataUri = `data:image/png;base64,${FIXTURE_IMAGE.toString("base64")}`;
-    const args = { preview_token: preview.preview_token, confirm: true, human_confirmed: true };
+    for (const [index, envValue] of [undefined, "false"].entries()) {
+      if (envValue === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
+      else process.env.GECOR_ALLOW_SUBMISSION = envValue;
+      const previewResult = await client.callTool({
+        name: "create_aviso_from_photo",
+        arguments: {
+          description: `fixture description ${index}`, tipoElementoID: 1, tipoIncID: 2,
+          lat: 36, lng: -6, image_base64: FIXTURE_IMAGE.toString("base64"),
+        },
+      });
+      const preview = JSON.parse(previewResult.content[0].text);
+      assert.equal(preview.phase, "preview");
+      assert.doesNotMatch(previewResult.content[0].text, /DRY-RUN|GECOR_ALLOW_SUBMISSION/);
+      assert.equal(calls.upload.length, index, "preview must not upload");
+      const args = { preview_token: preview.preview_token, confirm: true, human_confirmed: true };
 
-    for (const disabledValue of [undefined, "false"]) {
-      if (disabledValue === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-      else process.env.GECOR_ALLOW_SUBMISSION = disabledValue;
-      const blocked = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
-      assert.equal(blocked.isError, true);
-      assert.match(blocked.content[0].text, /GECOR_ALLOW_SUBMISSION=true/);
-      assert.deepEqual(calls, { upload: 0, submit: 0, uploadedPhoto: undefined });
+      const accepted = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
+      assert.equal(accepted.isError, undefined, accepted.content[0].text);
+      assert.equal(JSON.parse(accepted.content[0].text).phase, "submitted");
+      assert.equal(calls.upload.length, index + 1);
+      assert.equal(calls.upload[index], expectedPhotoDataUri);
+      assert.equal(calls.submit.length, index + 1);
+      assert.equal(calls.submit[index].desAveria, `fixture description ${index}`);
+
+      const replay = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
+      assert.equal(replay.isError, true);
+      assert.equal(calls.submit.length, index + 1);
     }
-
-    process.env.GECOR_ALLOW_SUBMISSION = "true";
-    const accepted = await client.callTool({ name: "create_aviso_from_photo", arguments: args });
-    assert.equal(accepted.isError, undefined);
-    assert.deepEqual(calls, { upload: 1, submit: 1, uploadedPhoto: expectedPhotoDataUri });
   } finally {
     await client.close();
     await server.close();

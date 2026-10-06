@@ -100,9 +100,7 @@ class TestTransport {
 }
 
 async function withServer(run) {
-  const previousAllow = process.env.GECOR_ALLOW_SUBMISSION;
   const previousFetch = globalThis.fetch;
-  process.env.GECOR_ALLOW_SUBMISSION = "true";
   const calls = { fetch: [], client: [], uploads: [] };
   globalThis.fetch = async (...fetchArgs) => { calls.fetch.push(String(fetchArgs[0])); throw new Error("network disabled in tests"); };
   const fakeClient = {
@@ -126,8 +124,6 @@ async function withServer(run) {
     await client.close();
     await server.close();
     globalThis.fetch = previousFetch;
-    if (previousAllow === undefined) delete process.env.GECOR_ALLOW_SUBMISSION;
-    else process.env.GECOR_ALLOW_SUBMISSION = previousAllow;
   }
 }
 
